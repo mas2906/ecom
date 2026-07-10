@@ -1,0 +1,112 @@
+"""
+Çıktı: JSON (JSONL) + CSV + PostgreSQL (opsiyonel)
+Fiyat düşüşü tespit edilirse Telegram bildirimi gider.
+"""
+
+import asyncio
+import csv
+import json
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+import aiofiles
+
+from models import Product
+
+logger = logging.getLogger(__name__)
+
+FIELDS = [
+    "platform", "category", "product_id", "title", "brand",
+    "price", "original_price", "discount_rate", "currency", "in_stock",
+    "rating", "review_count", "seller", "seller_rating", "url", "scraped_at",
+]
+
+
+class Storage:
+    def __init__(
+        self,
+        output_dir: str = "./output",
+        db_pool=None,
+        notifier=None,          # notifier.Notifier | None
+    ):
+        self._dir = Path(output_dir)
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._json_path = self._dir / f"products_{ts}.jsonl"
+        self._csv_path = self._dir / f"products_{ts}.csv"
+
+        self._csv_file = open(self._csv_path, "w", newline="", encoding="utf-8")
+        self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=FIELDS, extrasaction="ignore")
+        self._csv_writer.writeheader()
+
+        self._json_lines: list[str] = []
+        self._lock = asyncio.Lock()
+        self._count = 0
+
+        self._db_pool = db_pool
+        self._notifier = notifier
+
+    async def save(self, product: Product) -> None:
+        row = product.model_dump(exclude={"images"})
+
+        async with self._lock:
+            # --- Dosya çıktısı ---
+            self._json_lines.append(json.dumps(row, ensure_ascii=False))
+            self._csv_writer.writerow(row)
+            self._count += 1
+            if self._count % 50 == 0:
+                await self._write_json_chunk()
+
+        # --- PostgreSQL (lock dışında — I/O paralel çalışsın) ---
+        if self._db_pool and product.price is not None:
+            await self._save_to_db(product)
+
+    async def _save_to_db(self, product: Product) -> None:
+        from db import save_product  # geç import — db opsiyonel
+        try:
+            prev_price = await save_product(self._db_pool, product)
+
+            if self._notifier and product.price is not None:
+                # Fiyat düşüşü bildirimi
+                if prev_price is not None and product.price < prev_price:
+                    await self._notifier.price_drop(product, prev_price, product.price)
+
+                # Amazon "en düşük fiyat" rozeti bildirimi
+                if product.price_badge:
+                    await self._notifier.price_badge_alert(product)
+
+        except Exception as exc:
+            logger.warning("DB kayıt hatası (%s): %s", product.product_id, exc)
+
+    async def flush(self) -> None:
+        async with self._lock:
+            await self._write_json_chunk()
+        self._csv_file.flush()
+        self._csv_file.close()
+        logger.info(
+            "Çıktı: %s | %s (%d ürün)",
+            self._json_path, self._csv_path, self._count,
+        )
+
+    async def _write_json_chunk(self) -> None:
+        if not self._json_lines:
+            return
+        chunk = "\n".join(self._json_lines) + "\n"
+        self._json_lines.clear()
+        async with aiofiles.open(self._json_path, "a", encoding="utf-8") as f:
+            await f.write(chunk)
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+    @property
+    def json_path(self) -> Path:
+        return self._json_path
+
+    @property
+    def csv_path(self) -> Path:
+        return self._csv_path

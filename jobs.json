@@ -1,0 +1,17 @@
+[
+  {
+    "category": "laptop",
+    "platforms": ["trendyol", "amazon"],
+    "pages": 3
+  },
+  {
+    "category": "kulaklık",
+    "platforms": ["trendyol", "amazon"],
+    "pages": 2
+  },
+  {
+    "category": "akıllı telefon",
+    "platforms": ["amazon"],
+    "pages": 2
+  }
+]

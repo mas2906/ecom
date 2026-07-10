@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ecom Scraper</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --c-bg: #060610;
+      --c-glass: rgba(255,255,255,0.035);
+      --c-border: rgba(255,255,255,0.07);
+      --c-ty: #ff6000;
+      --c-am: #14a0e6;
+      --c-violet: #7c3aed;
+      --c-indigo: #4f46e5;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html{scroll-behavior:smooth}
+    body{font-family:'Inter',sans-serif;background:var(--c-bg);color:#fff;min-height:100vh;overflow-x:hidden}
+
+    /* Scrollbar */
+    ::-webkit-scrollbar{width:3px;height:3px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px}
+
+    /* Glass */
+    .glass{background:var(--c-glass);border:1px solid var(--c-border);backdrop-filter:blur(20px)}
+    .glass-hover{transition:background .2s,border-color .2s}
+    .glass-hover:hover{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.12)}
+
+    /* BG orbs */
+    .orb{position:fixed;border-radius:50%;filter:blur(80px);pointer-events:none;z-index:0}
+
+    /* Animations */
+    @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes tagIn{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:scale(1)}}
+    @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+    @keyframes countUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+    .fade-up{animation:fadeUp .35s ease both}
+    .pulse{animation:pulse 1.5s ease infinite}
+    .spin{animation:spin .8s linear infinite}
+
+    /* Platform cards */
+    .platform-card{cursor:pointer;transition:all .25s ease;user-select:none}
+    .platform-card:hover{transform:translateY(-1px)}
+    .platform-card.active-ty{background:rgba(255,96,0,.1);border-color:rgba(255,96,0,.5)!important;box-shadow:0 0 30px rgba(255,96,0,.15)}
+    .platform-card.active-am{background:rgba(20,160,230,.1);border-color:rgba(20,160,230,.5)!important;box-shadow:0 0 30px rgba(20,160,230,.15)}
+
+    /* Tag input (badge scanner only) */
+    .tag-box{min-height:42px;cursor:text;transition:border-color .2s,background .2s}
+    .tag-box:focus-within{border-color:rgba(124,58,237,.6)!important;background:rgba(255,255,255,.05)}
+    .tag{display:inline-flex;align-items:center;gap:4px;background:rgba(124,58,237,.2);border:1px solid rgba(124,58,237,.35);color:#c4b5fd;padding:3px 8px 3px 10px;border-radius:99px;font-size:11.5px;font-weight:500;white-space:nowrap;animation:tagIn .15s ease;transition:all .15s}
+    .tag:hover{background:rgba(124,58,237,.3)}
+    .tag-del{cursor:pointer;opacity:.4;line-height:1;font-size:15px;transition:opacity .15s;padding:0 1px}
+    .tag-del:hover{opacity:1;color:#f87171}
+    .tag-input{flex:1;min-width:130px;background:transparent;border:none;outline:none;color:#fff;font-size:13px;font-family:inherit}
+    .tag-input::placeholder{color:rgba(255,255,255,.18)}
+
+    /* Pool */
+    .pool-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background .15s;border:1px solid transparent;user-select:none}
+    .pool-item:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.06)}
+    .pool-item.selected{background:rgba(124,58,237,.08);border-color:rgba(124,58,237,.25)}
+    .pool-cb{width:16px;height:16px;border-radius:5px;border:1.5px solid rgba(255,255,255,.2);flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:.15s;background:transparent}
+    .pool-item.selected .pool-cb{background:#7c3aed;border-color:#7c3aed}
+    .pool-cb-check{display:none;color:#fff;font-size:10px;font-weight:900;line-height:1}
+    .pool-item.selected .pool-cb-check{display:block}
+    .pool-inp{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);color:#fff;border-radius:9px;padding:8px 12px;font-size:13px;font-family:inherit;outline:none;flex:1;transition:border-color .2s}
+    .pool-inp:focus{border-color:rgba(124,58,237,.5);background:rgba(255,255,255,.07)}
+    .pool-inp::placeholder{color:rgba(255,255,255,.2)}
+
+    /* Time tags */
+    .time-tag{display:inline-flex;align-items:center;gap:4px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.3);color:#6ee7b7;padding:3px 8px 3px 10px;border-radius:99px;font-size:12px;font-weight:600;font-family:'JetBrains Mono',monospace;animation:tagIn .15s ease}
+    .time-del{cursor:pointer;opacity:.4;font-size:15px;line-height:1;transition:opacity .15s;padding:0 1px}
+    .time-del:hover{opacity:1;color:#f87171}
+
+    /* Slider */
+    input[type=range]{-webkit-appearance:none;width:100%;height:3px;background:rgba(255,255,255,.08);border-radius:99px;outline:none}
+    input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#6366f1);cursor:pointer;box-shadow:0 0 10px rgba(124,58,237,.5)}
+
+    /* Time input */
+    .time-inp{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);color:#fff;border-radius:8px;padding:7px 12px;font-size:13px;font-family:'JetBrains Mono',monospace;outline:none;transition:border-color .2s}
+    .time-inp:focus{border-color:rgba(16,185,129,.5)}
+
+    /* Buttons */
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;border:none;outline:none}
+    .btn-ghost{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);color:rgba(255,255,255,.6)}
+    .btn-ghost:hover{background:rgba(255,255,255,.09);color:#fff}
+    .btn-green{background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.3);color:#6ee7b7}
+    .btn-green:hover{background:rgba(16,185,129,.22)}
+    .btn-blue{background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.3);color:#a5b4fc}
+    .btn-blue:hover{background:rgba(99,102,241,.22)}
+    .btn-primary{background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-size:14px;font-weight:700;border-radius:14px;box-shadow:0 8px 32px rgba(124,58,237,.3);letter-spacing:.05em;text-transform:uppercase}
+    .btn-primary:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 14px 40px rgba(124,58,237,.45)}
+    .btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none!important}
+    .btn-stop{background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;font-size:14px;font-weight:700;border-radius:14px;box-shadow:0 8px 32px rgba(220,38,38,.3);letter-spacing:.05em;text-transform:uppercase}
+    .btn-stop:hover{transform:translateY(-2px);box-shadow:0 14px 40px rgba(220,38,38,.45)}
+
+    /* Quick tags */
+    .quick-btn{padding:4px 10px;border-radius:99px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);font-size:11px;color:rgba(255,255,255,.35);cursor:pointer;transition:all .2s}
+    .quick-btn:hover{background:rgba(255,255,255,.08);color:rgba(255,255,255,.7);border-color:rgba(255,255,255,.18)}
+
+    /* Stat cards */
+    .stat-card{padding:16px 20px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06)}
+    .stat-val{font-size:26px;font-weight:800;line-height:1;letter-spacing:-.02em}
+    .stat-label{font-size:10.5px;color:rgba(255,255,255,.3);margin-top:5px;font-weight:500;text-transform:uppercase;letter-spacing:.08em}
+
+    /* Terminal */
+    #terminal{font-family:'JetBrains Mono',monospace;font-size:11.5px;background:#09090f;height:220px;overflow-y:auto;line-height:1.7}
+    .log-INFO{color:#86efac}
+    .log-WARNING{color:#fb923c}
+    .log-ERROR{color:#f87171}
+    .log-SYSTEM{color:#c084fc}
+    .log-DEBUG{color:#475569}
+
+    /* Progress */
+    .prog-bar{height:3px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden}
+    .prog-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#7c3aed,#6366f1,#7c3aed);background-size:200% 100%;animation:shimmer 2s linear infinite;transition:width .5s ease}
+
+    /* Tabs */
+    .tab-list{display:flex;border-bottom:1px solid rgba(255,255,255,.06);padding:0 20px;gap:4px}
+    .tab-btn{padding:10px 14px;font-size:12px;font-weight:600;color:rgba(255,255,255,.3);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .2s;border-radius:8px 8px 0 0}
+    .tab-btn:hover{color:rgba(255,255,255,.6)}
+    .tab-btn.active{color:#fff;border-bottom-color:#7c3aed;background:rgba(124,58,237,.06)}
+    .tab-pane{display:none}
+    .tab-pane.active{display:block}
+
+    /* Table */
+    .data-table{width:100%;border-collapse:collapse;font-size:12px}
+    .data-table th{padding:10px 16px;text-align:left;font-size:10px;font-weight:700;color:rgba(255,255,255,.25);text-transform:uppercase;letter-spacing:.1em;border-bottom:1px solid rgba(255,255,255,.05)}
+    .data-table td{padding:11px 16px;border-bottom:1px solid rgba(255,255,255,.03);vertical-align:middle}
+    .data-table tr:hover td{background:rgba(255,255,255,.02)}
+    .data-table tr:last-child td{border-bottom:none}
+
+    /* Badges */
+    .badge-ty{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;background:rgba(255,96,0,.12);color:#fb923c;font-size:10.5px;font-weight:600}
+    .badge-am{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;background:rgba(20,160,230,.12);color:#38bdf8;font-size:10.5px;font-weight:600}
+
+    /* Match card price bar */
+    .price-bar-wrap{display:flex;align-items:center;gap:6px;margin-top:6px}
+    .price-bar-bg{flex:1;height:4px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden;position:relative}
+    .price-bar-ty{position:absolute;left:0;top:0;height:100%;background:var(--c-ty);border-radius:99px;transition:width .6s ease}
+    .price-bar-am{position:absolute;left:0;top:0;height:100%;background:var(--c-am);border-radius:99px;transition:width .6s ease}
+
+    /* Match cards */
+    .match-card{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.04);transition:background .15s}
+    .match-card:hover{background:rgba(255,255,255,.02)}
+    .match-card:last-child{border-bottom:none}
+
+    /* Toggle switch */
+    .toggle-wrap{display:flex;align-items:center;gap:10px}
+    .toggle{position:relative;width:38px;height:20px;flex-shrink:0}
+    .toggle input{opacity:0;width:0;height:0;position:absolute}
+    .toggle-slider{position:absolute;inset:0;border-radius:99px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.1);cursor:pointer;transition:.25s}
+    .toggle input:checked + .toggle-slider{background:rgba(245,158,11,.25);border-color:rgba(245,158,11,.5)}
+    .toggle-slider:before{content:'';position:absolute;width:14px;height:14px;border-radius:50%;left:2px;top:2px;background:rgba(255,255,255,.3);transition:.25s}
+    .toggle input:checked + .toggle-slider:before{transform:translateX(18px);background:#f59e0b}
+    .badge-panel-disabled{opacity:.35;pointer-events:none}
+
+    /* Badge product card */
+    .badge-card{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.04);transition:background .15s;display:flex;align-items:flex-start;gap:12px}
+    .badge-card:hover{background:rgba(255,255,255,.02)}
+    .badge-card:last-child{border-bottom:none}
+    .badge-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:99px;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);color:#fcd34d;font-size:10.5px;font-weight:700;white-space:nowrap}
+
+    /* Separator */
+    .section-label{font-size:10px;font-weight:700;color:rgba(255,255,255,.25);text-transform:uppercase;letter-spacing:.15em}
+
+    /* Loading skeleton */
+    .skeleton{background:linear-gradient(90deg,rgba(255,255,255,.04) 25%,rgba(255,255,255,.08) 50%,rgba(255,255,255,.04) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:6px}
+  </style>
+</head>
+<body>
+
+  <!-- Background orbs -->
+  <div class="orb w-[500px] h-[500px] bg-violet-900/20 -top-32 -left-32"></div>
+  <div class="orb w-[400px] h-[400px] bg-indigo-900/15 bottom-0 right-0"></div>
+  <div class="orb w-[300px] h-[300px] bg-purple-900/10 top-1/2 left-1/2 -translate-x-1/2"></div>
+
+  <!-- Header -->
+  <header style="position:relative;z-index:10;border-bottom:1px solid rgba(255,255,255,.05);backdrop-filter:blur(20px);background:rgba(6,6,16,.7)">
+    <div style="max-width:960px;margin:0 auto;padding:0 24px;height:58px;display:flex;align-items:center;gap:12px">
+      <div style="width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#7c3aed,#4f46e5);display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 4px 20px rgba(124,58,237,.4)">⚡</div>
+      <div>
+        <div style="font-size:14px;font-weight:800;letter-spacing:-.01em">Ecom Scraper</div>
+        <div style="font-size:10.5px;color:rgba(255,255,255,.3);margin-top:1px">Trendyol · Amazon TR fiyat takibi</div>
+      </div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:14px">
+        <div id="header-status" style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:rgba(255,255,255,.3)">
+          <div style="width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.2)"></div>hazır
+        </div>
+        <button onclick="shutdownApp()" style="display:flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.25);color:rgba(248,113,113,.8);font-size:11.5px;font-weight:600;cursor:pointer;transition:all .2s;font-family:inherit" onmouseover="this.style.background='rgba(220,38,38,.2)';this.style.color='#fca5a5'" onmouseout="this.style.background='rgba(220,38,38,.1)';this.style.color='rgba(248,113,113,.8)'">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64A9 9 0 1 1 5.64 5.64"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+          Kapat
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main style="position:relative;z-index:1;max-width:960px;margin:0 auto;padding:28px 24px 60px;display:flex;flex-direction:column;gap:16px">
+
+    <!-- Stats row -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px" id="stats-row">
+      <div class="stat-card fade-up" style="animation-delay:.05s">
+        <div class="stat-val" id="stat-total" style="color:#c4b5fd">—</div>
+        <div class="stat-label">Toplam Ürün</div>
+      </div>
+      <div class="stat-card fade-up" style="animation-delay:.1s">
+        <div class="stat-val" id="stat-matches" style="color:#6ee7b7">—</div>
+        <div class="stat-label">Barkod Eşleşmesi</div>
+      </div>
+      <div class="stat-card fade-up" style="animation-delay:.15s">
+        <div class="stat-val" id="stat-last" style="color:#7dd3fc;font-size:16px;padding-top:5px">—</div>
+        <div class="stat-label">Son Tarama</div>
+      </div>
+    </div>
+
+    <!-- Platform seçimi -->
+    <div class="glass fade-up" style="border-radius:18px;padding:20px;animation-delay:.1s">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="section-label">Platform</div>
+        <span style="font-size:10.5px;color:rgba(255,255,255,.2)">Tüm sayfalar otomatik taranır</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+
+        <div id="card-trendyol" class="glass glass-hover platform-card active-ty" style="border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:10px" onclick="togglePlatform('trendyol')">
+          <div style="width:36px;height:36px;border-radius:9px;background:rgba(255,96,0,.15);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">🟠</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700">Trendyol</div>
+            <div style="font-size:10.5px;color:rgba(255,255,255,.3)">trendyol.com</div>
+          </div>
+          <div id="dot-trendyol" style="width:18px;height:18px;border-radius:50%;background:rgba(255,96,0,.2);border:2px solid #ff6000;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <div style="width:7px;height:7px;border-radius:50%;background:#ff6000"></div>
+          </div>
+        </div>
+
+        <div id="card-amazon" class="glass glass-hover platform-card active-am" style="border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:10px" onclick="togglePlatform('amazon')">
+          <div style="width:36px;height:36px;border-radius:9px;background:rgba(20,160,230,.15);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">🔵</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700">Amazon TR</div>
+            <div style="font-size:10.5px;color:rgba(255,255,255,.3)">amazon.com.tr</div>
+          </div>
+          <div id="dot-amazon" style="width:18px;height:18px;border-radius:50%;background:rgba(20,160,230,.2);border:2px solid #14a0e6;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <div style="width:7px;height:7px;border-radius:50%;background:#14a0e6"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Category Pool -->
+    <div class="glass fade-up" style="border-radius:18px;padding:20px;animation-delay:.2s">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div>
+          <div class="section-label">Kategori Havuzu</div>
+          <div style="font-size:10.5px;color:rgba(255,255,255,.2);margin-top:3px">İşaretlenenler taramaya dahil edilir</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="selectAllPool()">Tümünü Seç</button>
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="selectNonePool()">Temizle</button>
+          <span id="pool-sel-count" style="font-size:10.5px;color:rgba(255,255,255,.25);font-family:'JetBrains Mono',monospace;min-width:40px;text-align:right">0 seçili</span>
+        </div>
+      </div>
+
+      <!-- Pool list -->
+      <div id="pool-list" style="display:flex;flex-direction:column;gap:3px;max-height:240px;overflow-y:auto;margin-bottom:12px">
+        <div style="text-align:center;padding:24px;color:rgba(255,255,255,.2);font-size:12px">Havuz boş — aşağıdan ekleyin</div>
+      </div>
+
+      <!-- Add to pool input -->
+      <div style="display:flex;gap:8px;padding-top:10px;border-top:1px solid rgba(255,255,255,.05)">
+        <input class="pool-inp" id="pool-input" type="text" placeholder="laptop, kulaklık  —  veya Trendyol mağaza URL'i yapıştır" autocomplete="off" spellcheck="false">
+        <button class="btn" onclick="addToPool()" style="padding:8px 16px;background:rgba(124,58,237,.15);border:1px solid rgba(124,58,237,.3);color:#c4b5fd;font-size:12px;font-weight:700;border-radius:9px;white-space:nowrap">+ Ekle</button>
+      </div>
+    </div>
+
+    <!-- Schedule -->
+    <div class="glass fade-up" style="border-radius:18px;padding:20px;animation-delay:.25s">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="section-label">Otomatik Zamanlama</div>
+        <span style="font-size:10.5px;color:rgba(255,255,255,.2)">jobs.json · günlük</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <input class="time-inp" id="time-input" type="time" value="09:00">
+        <button class="btn btn-green" style="padding:7px 14px" onclick="addScheduleTime()">+ Saat Ekle</button>
+        <button class="btn btn-blue" style="padding:7px 14px;margin-left:auto" onclick="saveSchedule()">💾 Kaydet</button>
+      </div>
+      <div id="schedule-tags" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px;align-items:center">
+        <span style="font-size:11px;color:rgba(255,255,255,.2)">Saat eklenmedi — her gün çalışmaz</span>
+      </div>
+      <div id="schedule-status" style="font-size:10.5px;color:rgba(255,255,255,.3);margin-top:8px"></div>
+    </div>
+
+    <!-- Badge Scanner -->
+    <div class="glass fade-up" style="border-radius:18px;padding:20px;animation-delay:.28s">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">🏷️</span>
+          <div>
+            <div style="font-size:13px;font-weight:700">Rozet Tarayıcı</div>
+            <div style="font-size:10.5px;color:rgba(255,255,255,.3);margin-top:1px">Amazon genelinde "Yılın en düşük fiyatı" rozetli ürünleri bul</div>
+          </div>
+        </div>
+        <label class="toggle" title="Rozet taramasını etkinleştir">
+          <input type="checkbox" id="badge-toggle" onchange="onBadgeToggle(this.checked)">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <!-- Content (disabled when toggle is off) -->
+      <div id="badge-panel-body" class="badge-panel-disabled" style="margin-top:16px;display:flex;flex-direction:column;gap:12px">
+
+        <!-- Category input -->
+        <div>
+          <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,.25);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">
+            Kategoriler <span style="color:rgba(255,255,255,.15);font-weight:400;text-transform:none">— boş bırakırsanız 15 varsayılan kategori taranır</span>
+          </div>
+          <div class="glass tag-box" id="badge-tag-box" style="border-radius:12px;padding:8px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;border:1px solid rgba(255,255,255,.08);min-height:42px" onclick="document.getElementById('badge-tag-input').focus()">
+            <input class="tag-input" id="badge-tag-input" type="text" placeholder="boş = varsayılan 15 kategori… Enter ile ekle" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+
+        <!-- Pages + scan button row -->
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="display:flex;align-items:center;gap:8px;flex:1">
+            <span style="font-size:11px;color:rgba(255,255,255,.3);white-space:nowrap">Sayfa:</span>
+            <input id="badge-pages" type="range" min="1" max="5" value="2" style="flex:1" oninput="document.getElementById('badge-pages-val').textContent=this.value">
+            <span id="badge-pages-val" style="font-size:14px;font-weight:800;color:#f59e0b;font-family:'JetBrains Mono',monospace;min-width:20px;text-align:center">2</span>
+          </div>
+          <button id="btn-badge-scan" class="btn" onclick="startBadgeScan()"
+            style="padding:9px 20px;background:linear-gradient(135deg,#d97706,#b45309);color:#fff;font-size:12px;font-weight:700;border-radius:11px;box-shadow:0 4px 20px rgba(217,119,6,.3);letter-spacing:.04em;white-space:nowrap;opacity:.5;cursor:not-allowed">
+            🏷️ Rozet Tara
+          </button>
+        </div>
+
+        <!-- Badge scan progress -->
+        <div id="badge-progress" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span id="badge-prog-label" style="font-size:11.5px;color:rgba(255,255,255,.5)">Taranıyor…</span>
+            <span id="badge-prog-count" style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#f59e0b">0 ürün</span>
+          </div>
+          <div class="prog-bar">
+            <div id="badge-prog-fill" style="height:100%;border-radius:99px;background:linear-gradient(90deg,#d97706,#f59e0b,#d97706);background-size:200% 100%;animation:shimmer 2s linear infinite;width:100%"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Scan button -->
+    <button id="btn-scan" class="btn btn-primary fade-up" style="width:100%;padding:16px;animation-delay:.3s" onclick="startScan()">
+      ⚡ Taramaya Başla
+    </button>
+
+    <!-- Progress -->
+    <div id="progress-wrap" style="display:none" class="glass fade-up" style="border-radius:18px;padding:18px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12.5px;color:rgba(255,255,255,.6)" id="prog-label">Hazırlanıyor…</div>
+        <div style="font-size:13px;font-weight:700;color:#c4b5fd;font-family:'JetBrains Mono',monospace" id="prog-count">0 ürün</div>
+      </div>
+      <div class="prog-bar"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:10.5px;color:rgba(255,255,255,.25)">
+        <span id="prog-step">Başlatılıyor…</span>
+        <span id="prog-pct">0%</span>
+      </div>
+    </div>
+
+    <!-- Terminal -->
+    <div class="glass fade-up" style="border-radius:18px;overflow:hidden;animation-delay:.32s">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.05)">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="display:flex;gap:5px">
+            <div style="width:11px;height:11px;border-radius:50%;background:#ff5f57"></div>
+            <div style="width:11px;height:11px;border-radius:50%;background:#febc2e"></div>
+            <div style="width:11px;height:11px;border-radius:50%;background:#28c840"></div>
+          </div>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:rgba(255,255,255,.2)">terminal</span>
+        </div>
+        <div id="term-status" style="display:flex;align-items:center;gap:6px;font-size:10.5px;color:rgba(255,255,255,.2)">bekliyor</div>
+      </div>
+      <div id="terminal" style="padding:14px 16px">
+        <div class="log-SYSTEM">$ ecom-scraper — başlatılmayı bekliyor…</div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div class="glass fade-up" style="border-radius:18px;overflow:hidden;animation-delay:.35s">
+      <!-- Tab bar -->
+      <div class="tab-list">
+        <button class="tab-btn active" onclick="switchTab('results')">Son Tarama</button>
+        <button class="tab-btn" onclick="switchTab('matches')">
+          Barkod Eşleşmeleri
+          <span id="match-badge" style="display:none;margin-left:6px;padding:1px 7px;border-radius:99px;background:rgba(110,231,183,.15);color:#6ee7b7;font-size:10px;font-weight:700"></span>
+        </button>
+        <button class="tab-btn" onclick="switchTab('badges')">
+          En Düşük Rozetler
+          <span id="badge-count-badge" style="display:none;margin-left:6px;padding:1px 7px;border-radius:99px;background:rgba(245,158,11,.15);color:#fcd34d;font-size:10px;font-weight:700"></span>
+        </button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px;padding:8px 0">
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="loadRecent();loadMatches();loadBadgeProducts()">↻ Yenile</button>
+          <span id="result-count" style="font-size:10.5px;color:rgba(255,255,255,.2);font-family:'JetBrains Mono',monospace">—</span>
+        </div>
+      </div>
+
+      <!-- Tab: Son Tarama -->
+      <div id="tab-results" class="tab-pane active">
+        <div style="overflow-x:auto">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Platform</th>
+                <th>Kategori</th>
+                <th>Ürün</th>
+                <th style="text-align:right">Fiyat</th>
+                <th style="text-align:right">İndirim</th>
+              </tr>
+            </thead>
+            <tbody id="results-tbody">
+              <tr><td colspan="5" style="text-align:center;padding:40px;color:rgba(255,255,255,.2);font-size:13px">Henüz tarama yapılmadı</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tab: Barkod Eşleşmeleri -->
+      <div id="tab-matches" class="tab-pane">
+        <div id="matches-list" style="padding:4px 0">
+          <div style="text-align:center;padding:40px;color:rgba(255,255,255,.2);font-size:13px">Henüz barkod eşleşmesi yok</div>
+        </div>
+      </div>
+
+      <!-- Tab: En Düşük Rozetler -->
+      <div id="tab-badges" class="tab-pane">
+        <div id="badge-products-list" style="padding:4px 0">
+          <div style="text-align:center;padding:40px;color:rgba(255,255,255,.2);font-size:13px">Henüz rozet taraması yapılmadı</div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <script>
+  // ── Platform ──────────────────────────────────────────────────────
+  function _loadPlatformSel() {
+    try {
+      const s = localStorage.getItem('platformSel');
+      if (s) return JSON.parse(s);
+    } catch(_) {}
+    return {trendyol: true, amazon: true};
+  }
+
+  const sel = _loadPlatformSel();
+
+  function _applyPlatformUI() {
+    for (const name of ['trendyol', 'amazon']) {
+      const isTy = name === 'trendyol';
+      document.getElementById(`card-${name}`).classList.toggle(isTy ? 'active-ty' : 'active-am', sel[name]);
+      document.getElementById(`dot-${name}`).style.opacity = sel[name] ? '1' : '0.2';
+    }
+  }
+
+  function togglePlatform(name) {
+    sel[name] = !sel[name];
+    const isTy = name === 'trendyol';
+    document.getElementById(`card-${name}`).classList.toggle(isTy ? 'active-ty' : 'active-am', sel[name]);
+    document.getElementById(`dot-${name}`).style.opacity = sel[name] ? '1' : '0.2';
+    try { localStorage.setItem('platformSel', JSON.stringify(sel)); } catch(_) {}
+  }
+
+  // ── Category Pool ────────────────────────────────────────────────
+  let pool = [];          // tüm havuz öğeleri
+  const poolSel = new Set(); // seçili olanlar
+
+  function _savePoolSel() {
+    try { localStorage.setItem('poolSel', JSON.stringify([...poolSel])); } catch(_) {}
+  }
+
+  function _restorePoolSel() {
+    try {
+      const saved = localStorage.getItem('poolSel');
+      if (saved) JSON.parse(saved).forEach(i => poolSel.add(i));
+    } catch(_) {}
+  }
+
+  function getSelectedPool() { return [...poolSel]; }
+
+  function isUrl(s) { return s.startsWith('http://') || s.startsWith('https://'); }
+
+  function urlLabel(url) {
+    const m = url.match(/\/magaza\/([^/?#]+)/);
+    if (m) return 'mağaza:' + m[1].replace(/-m-\d+$/, '');
+    const m2 = url.match(/mid=(\d+)/);
+    if (m2) return 'satıcı:' + m2[1];
+    try { return new URL(url).hostname.replace('www.','') + '/…'; } catch(_) { return url.slice(0,40); }
+  }
+
+  function renderPool() {
+    const list = document.getElementById('pool-list');
+    if (!pool.length) {
+      list.innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,.2);font-size:12px">Havuz boş — aşağıdan ekleyin</div>';
+      updatePoolCount();
+      return;
+    }
+    list.innerHTML = pool.map(item => {
+      const selected = poolSel.has(item);
+      const safe = item.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+      const isLink = isUrl(item);
+      const displayName = isLink ? urlLabel(item) : item;
+      const icon = isLink ? '🔗' : '🔍';
+      const urlBadge = isLink
+        ? `<span style="font-size:9.5px;padding:1px 6px;border-radius:5px;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.2);color:#7dd3fc;margin-left:4px;white-space:nowrap">Trendyol</span>`
+        : '';
+      const fullUrlTitle = isLink ? ` title="${item}"` : '';
+      return `<div class="pool-item${selected?' selected':''}" onclick="togglePoolItem('${safe}')"${fullUrlTitle}>
+        <div class="pool-cb"><span class="pool-cb-check">✓</span></div>
+        <span style="font-size:13px;margin-right:4px;flex-shrink:0">${icon}</span>
+        <span style="flex:1;font-size:12.5px;color:${selected?'rgba(255,255,255,.9)':'rgba(255,255,255,.55)'};${isLink?'font-family:\'JetBrains Mono\',monospace;font-size:11.5px':''};">${displayName}</span>
+        ${urlBadge}
+        <span onclick="event.stopPropagation();deleteFromPool('${safe}')" style="cursor:pointer;padding:2px 6px;border-radius:6px;font-size:11px;color:rgba(255,255,255,.2);transition:.15s;flex-shrink:0" onmouseover="this.style.color='#f87171';this.style.background='rgba(248,113,113,.1)'" onmouseout="this.style.color='rgba(255,255,255,.2)';this.style.background='transparent'">✕</span>
+      </div>`;
+    }).join('');
+    updatePoolCount();
+  }
+
+  function updatePoolCount() {
+    const n = poolSel.size;
+    document.getElementById('pool-sel-count').textContent = n ? `${n} seçili` : `${pool.length} öğe`;
+  }
+
+  function togglePoolItem(item) {
+    if (poolSel.has(item)) poolSel.delete(item);
+    else poolSel.add(item);
+    renderPool();
+    _savePoolSel();
+  }
+
+  function selectAllPool() {
+    pool.forEach(i => poolSel.add(i));
+    renderPool();
+    _savePoolSel();
+  }
+
+  function selectNonePool() {
+    poolSel.clear();
+    renderPool();
+    _savePoolSel();
+  }
+
+  async function addToPool() {
+    const raw = document.getElementById('pool-input').value.trim();
+    if (!raw) return;
+    let items;
+    // URL ise tek öğe olarak ekle (virgülle bölme)
+    if (isUrl(raw)) {
+      items = [raw.trim()];
+    } else {
+      items = raw.split(/[,،\n]/).map(s=>s.trim().toLowerCase()).filter(Boolean);
+    }
+    try {
+      const d = await fetch('/pool',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})}).then(r=>r.json());
+      pool = d.items;
+      d.added.forEach(i => poolSel.add(i));
+      renderPool();
+      _savePoolSel();
+      document.getElementById('pool-input').value = '';
+    } catch(e) { showToast('Havuz hatası: '+e.message,'error'); }
+  }
+
+  async function deleteFromPool(item) {
+    try {
+      const d = await fetch(`/pool/${encodeURIComponent(item)}`,{method:'DELETE'}).then(r=>r.json());
+      pool = d.items;
+      poolSel.delete(item);
+      renderPool();
+      _savePoolSel();
+    } catch(e) { showToast('Silme hatası','error'); }
+  }
+
+  async function loadPool() {
+    try {
+      const d = await fetch('/pool').then(r=>r.json());
+      pool = d.items || [];
+      _restorePoolSel();
+      // Silinmiş öğeleri seçimden temizle
+      for (const i of [...poolSel]) { if (!pool.includes(i)) poolSel.delete(i); }
+      renderPool();
+    } catch(_) {}
+  }
+
+  document.getElementById('pool-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); addToPool(); }
+  });
+
+  // ── Schedule ──────────────────────────────────────────────────────
+  const scheduleTimes = new Set();
+
+  function renderScheduleTags() {
+    const cont = document.getElementById('schedule-tags');
+    cont.innerHTML = '';
+    if (!scheduleTimes.size) {
+      cont.innerHTML = '<span style="font-size:11px;color:rgba(255,255,255,.2)">Saat eklenmedi — her gün çalışmaz</span>';
+      return;
+    }
+    [...scheduleTimes].sort().forEach(t => {
+      const span = document.createElement('span');
+      span.className = 'time-tag';
+      span.innerHTML = `🕐 ${t}<span class="time-del" onclick="removeScheduleTime('${t}')">×</span>`;
+      cont.appendChild(span);
+    });
+  }
+
+  function addScheduleTime() {
+    const t = document.getElementById('time-input').value;
+    if (!t) return;
+    scheduleTimes.add(t);
+    renderScheduleTags();
+  }
+
+  function removeScheduleTime(t) {
+    scheduleTimes.delete(t);
+    renderScheduleTags();
+  }
+
+  async function saveSchedule() {
+    const times = [...scheduleTimes].sort();
+    try {
+      const d = await fetch('/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({times})}).then(r=>r.json());
+      if (d.ok) {
+        const el = document.getElementById('schedule-status');
+        el.textContent = times.length
+          ? `✓ Her gün ${times.join(' ve ')} saatinde otomatik taranacak`
+          : '✓ Zamanlama kaldırıldı';
+        el.style.color = '#6ee7b7';
+      }
+    } catch(e) {
+      document.getElementById('schedule-status').textContent = 'Hata: ' + e.message;
+    }
+  }
+
+  async function loadSchedule() {
+    try {
+      const d = await fetch('/schedule').then(r=>r.json());
+      (d.times||[]).forEach(t => scheduleTimes.add(t));
+      renderScheduleTags();
+      if (scheduleTimes.size) {
+        const el = document.getElementById('schedule-status');
+        el.textContent = `Her gün ${[...scheduleTimes].sort().join(' ve ')} saatinde çalışıyor`;
+      }
+    } catch(_) {}
+  }
+
+  // ── Badge scanner toggle ─────────────────────────────────────────
+  function onBadgeToggle(enabled) {
+    const body = document.getElementById('badge-panel-body');
+    const btn = document.getElementById('btn-badge-scan');
+    body.classList.toggle('badge-panel-disabled', !enabled);
+    btn.style.opacity = enabled ? '1' : '.5';
+    btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+  }
+
+  // Badge category tags
+  const badgeTags = new Set();
+  document.getElementById('badge-tag-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      const val = e.target.value.trim().toLowerCase();
+      if (!val || badgeTags.has(val)) return;
+      badgeTags.add(val);
+      const span = document.createElement('span');
+      span.className = 'tag';
+      span.dataset.val = val;
+      span.innerHTML = `${val}<span class="tag-del" onclick="removeBadgeTag('${val.replace(/'/g,"\\'")}')">×</span>`;
+      const box = document.getElementById('badge-tag-box');
+      box.insertBefore(span, document.getElementById('badge-tag-input'));
+      e.target.value = '';
+    } else if (e.key === 'Backspace' && !e.target.value) {
+      const last = [...badgeTags].at(-1);
+      if (last) removeBadgeTag(last);
+    }
+  });
+
+  function removeBadgeTag(val) {
+    badgeTags.delete(val);
+    document.querySelector(`#badge-tag-box .tag[data-val="${val}"]`)?.remove();
+  }
+
+  // Badge scan
+  let _badgeJobId = null;
+
+  function _resetBadgeBtn() {
+    const btn = document.getElementById('btn-badge-scan');
+    btn.disabled = false;
+    btn.style.background = 'linear-gradient(135deg,#d97706,#b45309)';
+    btn.style.boxShadow = '0 4px 20px rgba(217,119,6,.3)';
+    btn.innerHTML = '🏷️ Rozet Tara';
+    btn.onclick = startBadgeScan;
+    document.getElementById('badge-progress').style.display = 'none';
+    _badgeJobId = null;
+  }
+
+  async function stopBadgeScan() {
+    if (!_badgeJobId) return;
+    try {
+      await fetch(`/cancel/${_badgeJobId}`, {method: 'POST'});
+      addLog('⛔ Rozet tarama durdurma isteği gönderildi…', 'WARNING');
+    } catch(e) {
+      addLog('Durdurma hatası: ' + e.message, 'ERROR');
+    }
+  }
+
+  async function startBadgeScan() {
+    if (!document.getElementById('badge-toggle').checked) return;
+    const btn = document.getElementById('btn-badge-scan');
+    const pages = parseInt(document.getElementById('badge-pages').value);
+    const categories = [...badgeTags];
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin" style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%"></span> Başlatılıyor…';
+    document.getElementById('badge-progress').style.display = 'block';
+    document.getElementById('badge-prog-count').textContent = '0 ürün';
+    document.getElementById('badge-prog-label').textContent = 'Başlatılıyor…';
+
+    addLog('🏷️ Rozet taraması başladı', 'SYSTEM');
+    setStatus('rozet taranıyor', true);
+
+    try {
+      const {job_id} = await fetch('/scan-badges', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({categories, pages})
+      }).then(r=>r.json());
+
+      _badgeJobId = job_id;
+      btn.disabled = false;
+      btn.style.background = 'linear-gradient(135deg,#dc2626,#991b1b)';
+      btn.style.boxShadow = '0 4px 20px rgba(220,38,38,.3)';
+      btn.innerHTML = '⛔ Durdur';
+      btn.onclick = stopBadgeScan;
+
+      const es = new EventSource(`/stream-badges/${job_id}`);
+      es.onmessage = ({data}) => {
+        const msg = JSON.parse(data);
+        if (!msg || msg.type==='ping') return;
+        if (msg.type==='log' && msg.level!=='DEBUG') addLog(msg.msg, msg.level);
+        else if (msg.type==='badge_product') {
+          document.getElementById('badge-prog-count').textContent = msg.count + ' ürün';
+          document.getElementById('badge-prog-label').textContent = `🏷️ ${msg.badge} — ${msg.title}`;
+          addLog(`🏷️ ${msg.badge}: ${msg.title}`, 'INFO');
+        } else if (msg.type==='done') {
+          addLog(`━━━ Rozet taraması tamamlandı: ${msg.total} ürün ━━━`, 'SYSTEM');
+          es.close();
+          _resetBadgeBtn();
+          setStatus('tamamlandı');
+          loadBadgeProducts();
+          switchTab('badges');
+          showToast(`${msg.total} rozetli ürün bulundu`, 'success');
+        } else if (msg.type==='cancelled') {
+          addLog(`⛔ Rozet taraması durduruldu — ${msg.total} ürün`, 'WARNING');
+          es.close();
+          _resetBadgeBtn();
+          setStatus('durduruldu');
+          if (msg.total > 0) loadBadgeProducts();
+          showToast('Rozet taraması durduruldu', 'info');
+        }
+      };
+      es.onerror = () => {
+        addLog('Rozet tarama bağlantı hatası', 'ERROR');
+        es.close();
+        _resetBadgeBtn();
+        setStatus('hata');
+      };
+    } catch(err) {
+      addLog(err.message, 'ERROR');
+      _resetBadgeBtn();
+      setStatus('hata');
+    }
+  }
+
+  // ── Tabs ──────────────────────────────────────────────────────────
+  function switchTab(name) {
+    const tabNames = ['results','matches','badges'];
+    document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', tabNames[i]===name));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    document.getElementById('tab-'+name).classList.add('active');
+    if (name==='matches') loadMatches();
+    if (name==='badges') loadBadgeProducts();
+  }
+
+  // ── Terminal ──────────────────────────────────────────────────────
+  function addLog(msg, level='INFO') {
+    const t = document.getElementById('terminal');
+    const d = document.createElement('div');
+    const ts = new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    d.className = 'log-'+level;
+    d.textContent = `[${ts}] ${msg}`;
+    t.appendChild(d);
+    t.scrollTop = t.scrollHeight;
+  }
+
+  function setStatus(text, active=false) {
+    const html = active
+      ? `<div class="pulse" style="width:7px;height:7px;border-radius:50%;background:#a78bfa;flex-shrink:0"></div><span style="color:#c4b5fd">${text}</span>`
+      : `<div style="width:7px;height:7px;border-radius:50%;background:#34d399;flex-shrink:0"></div><span style="color:#6ee7b7">${text}</span>`;
+    document.getElementById('term-status').innerHTML = html;
+    document.getElementById('header-status').innerHTML = html;
+  }
+
+  // ── Progress ──────────────────────────────────────────────────────
+  let totalJobs=0, doneJobs=0, totalProducts=0;
+
+  function initProgress(n) {
+    totalJobs=n; doneJobs=0; totalProducts=0;
+    document.getElementById('progress-wrap').style.display='block';
+    document.getElementById('prog-fill').style.width='0%';
+    document.getElementById('prog-count').textContent='0 ürün';
+    document.getElementById('prog-label').textContent=`0 / ${n} iş tamamlandı`;
+    document.getElementById('prog-pct').textContent='0%';
+  }
+
+  function tickProgress(count, label='') {
+    doneJobs++; totalProducts+=count;
+    const pct = Math.round(doneJobs/totalJobs*100);
+    document.getElementById('prog-fill').style.width=pct+'%';
+    document.getElementById('prog-count').textContent=totalProducts+' ürün';
+    document.getElementById('prog-label').textContent=`${doneJobs} / ${totalJobs} iş tamamlandı`;
+    document.getElementById('prog-pct').textContent=pct+'%';
+    if (label) document.getElementById('prog-step').textContent=label;
+  }
+
+  // ── Scan ──────────────────────────────────────────────────────────
+  let _currentJobId = null;
+
+  function _setScanBtnStop() {
+    const btn = document.getElementById('btn-scan');
+    btn.disabled = false;
+    btn.className = 'btn btn-stop fade-up';
+    btn.innerHTML = '⛔ Durdur';
+    btn.onclick = stopScan;
+  }
+
+  function _resetScanBtn() {
+    const btn = document.getElementById('btn-scan');
+    btn.disabled = false;
+    btn.className = 'btn btn-primary fade-up';
+    btn.innerHTML = '⚡ Taramaya Başla';
+    btn.onclick = startScan;
+    _currentJobId = null;
+  }
+
+  async function stopScan() {
+    if (!_currentJobId) return;
+    try {
+      await fetch(`/cancel/${_currentJobId}`, {method: 'POST'});
+      addLog('⛔ Durdurma isteği gönderildi…', 'WARNING');
+    } catch(e) {
+      addLog('Durdurma hatası: ' + e.message, 'ERROR');
+    }
+  }
+
+  async function startScan() {
+    const platforms = Object.entries(sel).filter(([,v])=>v).map(([k])=>k);
+    const categories = getSelectedPool();
+    const pages = 50; // scraper ürün kalmayınca zaten durur
+
+    if (!platforms.length) { showToast('En az bir platform seçin', 'error'); return; }
+    if (!categories.length) { showToast('Havuzdan en az bir kategori seçin', 'error'); return; }
+
+    const btn = document.getElementById('btn-scan');
+    btn.disabled=true;
+    btn.innerHTML='<span class="spin" style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%"></span> Başlatılıyor…';
+
+    document.getElementById('terminal').innerHTML='';
+    addLog(`${categories.length} kategori × ${platforms.length} platform = ${categories.length*platforms.length} iş`, 'SYSTEM');
+    setStatus('taranıyor', true);
+    initProgress(categories.length*platforms.length);
+
+    try {
+      const {job_id} = await fetch('/scrape',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({platforms,categories,pages})
+      }).then(r=>r.json());
+
+      _currentJobId = job_id;
+      _setScanBtnStop();
+
+      const es = new EventSource(`/stream/${job_id}`);
+      es.onmessage = ({data}) => {
+        const msg = JSON.parse(data);
+        if (!msg || msg.type==='ping') return;
+        if (msg.type==='log' && msg.level!=='DEBUG') addLog(msg.msg, msg.level);
+        else if (msg.type==='platform_done') {
+          addLog(`✓ ${msg.platform.toUpperCase()} / "${msg.category}" → ${msg.count} ürün`, 'SYSTEM');
+          tickProgress(msg.count, `${msg.platform} / ${msg.category}`);
+        } else if (msg.type==='done') {
+          addLog(`━━━ Tamamlandı! ${msg.total} ürün kaydedildi ━━━`, 'SYSTEM');
+          es.close();
+          _resetScanBtn();
+          setStatus('tamamlandı');
+          loadRecent(); loadMatches(); loadStats();
+          showToast(`${msg.total} ürün başarıyla tarandı`, 'success');
+        } else if (msg.type==='cancelled') {
+          addLog(`⛔ Durduruldu — ${msg.total} ürün kaydedildi`, 'WARNING');
+          es.close();
+          _resetScanBtn();
+          setStatus('durduruldu');
+          if (msg.total > 0) { loadRecent(); loadStats(); }
+          showToast('Tarama durduruldu', 'info');
+        }
+      };
+      es.onerror = () => {
+        addLog('Bağlantı hatası', 'ERROR'); es.close();
+        _resetScanBtn();
+        setStatus('hata');
+      };
+    } catch(err) {
+      addLog(err.message,'ERROR');
+      _resetScanBtn();
+      setStatus('hata');
+    }
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────
+  function fmt(p) {
+    if (p==null) return '—';
+    return Number(p).toLocaleString('tr-TR',{minimumFractionDigits:2})+' ₺';
+  }
+
+  function timeAgo(iso) {
+    if (!iso) return '—';
+    const diff = Date.now() - new Date(iso);
+    const m = Math.floor(diff/60000);
+    if (m<1) return 'az önce';
+    if (m<60) return m+'dk önce';
+    const h = Math.floor(m/60);
+    if (h<24) return h+'sa önce';
+    return Math.floor(h/24)+'g önce';
+  }
+
+  // ── Toast ─────────────────────────────────────────────────────────
+  function showToast(msg, type='info') {
+    const t = document.createElement('div');
+    const colors = {success:'rgba(52,211,153,.9)',error:'rgba(248,113,113,.9)',info:'rgba(167,139,250,.9)'};
+    t.style.cssText = `position:fixed;bottom:24px;right:24px;z-index:999;padding:12px 18px;border-radius:12px;background:${colors[type]};color:#fff;font-size:13px;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.4);animation:fadeUp .3s ease;backdrop-filter:blur(10px)`;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────────
+  async function loadStats() {
+    try {
+      const [recent, matches] = await Promise.all([
+        fetch('/recent').then(r=>r.json()),
+        fetch('/matches').then(r=>r.json()),
+      ]);
+      if (recent.length) {
+        animateCount('stat-total', recent.length, '#c4b5fd');
+        animateCount('stat-matches', Array.isArray(matches)?matches.length:0, '#6ee7b7');
+        document.getElementById('stat-last').textContent = timeAgo(recent[0]?.scraped_at);
+      }
+    } catch(_) {}
+  }
+
+  function animateCount(id, target, color) {
+    const el = document.getElementById(id);
+    el.style.color = color;
+    let start = 0;
+    const step = Math.ceil(target/30);
+    const t = setInterval(() => {
+      start = Math.min(start+step, target);
+      el.textContent = start.toLocaleString('tr-TR');
+      if (start>=target) clearInterval(t);
+    }, 30);
+  }
+
+  // ── Results ───────────────────────────────────────────────────────
+  async function loadRecent() {
+    try {
+      const rows = await fetch('/recent').then(r=>r.json());
+      if (!Array.isArray(rows)||!rows.length) return;
+      document.getElementById('result-count').textContent = rows.length+' ürün';
+      document.getElementById('results-tbody').innerHTML = rows.map(r => {
+        const badge = r.platform==='trendyol'
+          ? '<span class="badge-ty">🟠 Trendyol</span>'
+          : '<span class="badge-am">🔵 Amazon</span>';
+        const disc = r.discount_rate>0
+          ? `<span style="color:#34d399;font-weight:700;font-family:'JetBrains Mono',monospace">%${Math.round(r.discount_rate)}</span>`
+          : '<span style="color:rgba(255,255,255,.2)">—</span>';
+        const title = (r.title||'').slice(0,50)+((r.title||'').length>50?'…':'');
+        return `<tr>
+          <td>${badge}</td>
+          <td><span style="font-size:10.5px;color:rgba(255,255,255,.3);background:rgba(255,255,255,.05);padding:2px 7px;border-radius:6px">${r.category||'—'}</span></td>
+          <td style="max-width:240px"><a href="${r.url}" target="_blank" style="color:rgba(255,255,255,.65);text-decoration:none;transition:color .15s" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,.65)'">${title}</a></td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;color:rgba(255,255,255,.85);white-space:nowrap">${fmt(r.price)}</td>
+          <td style="text-align:right">${disc}</td>
+        </tr>`;
+      }).join('');
+    } catch(_) {}
+  }
+
+  // ── Matches ───────────────────────────────────────────────────────
+  async function loadMatches() {
+    try {
+      const rows = await fetch('/matches').then(r=>r.json());
+      const badge = document.getElementById('match-badge');
+      const list = document.getElementById('matches-list');
+
+      if (!Array.isArray(rows)||!rows.length) {
+        badge.style.display='none';
+        list.innerHTML='<div style="text-align:center;padding:40px;color:rgba(255,255,255,.2);font-size:13px">Henüz barkod eşleşmesi bulunamadı</div>';
+        return;
+      }
+
+      badge.textContent = rows.length;
+      badge.style.display='inline';
+
+      list.innerHTML = rows.map(r => {
+        const tyP = r.price_trendyol, amP = r.price_amazon;
+        let diffHtml = '';
+        let tyW = 50, amW = 50;
+        if (tyP && amP) {
+          const max = Math.max(tyP, amP);
+          tyW = Math.round(tyP/max*100);
+          amW = Math.round(amP/max*100);
+          const diff = Math.abs(tyP-amP);
+          const pct = (diff/max*100).toFixed(1);
+          const cheaper = tyP<amP ? '<span style="color:#fb923c">🟠 Trendyol</span>' : '<span style="color:#38bdf8">🔵 Amazon</span>';
+          diffHtml = `<div style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:4px 10px;border-radius:8px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)">
+            <span style="font-size:10.5px;color:rgba(255,255,255,.4)">%${pct} fark —</span>
+            ${cheaper} <span style="font-size:10.5px;color:rgba(255,255,255,.4)">daha ucuz · ${fmt(diff)} tasarruf</span>
+          </div>`;
+        }
+        const titleTy = (r.title_trendyol||'').slice(0,45);
+        const titleAm = (r.title_amazon||'').slice(0,45);
+        return `<div class="match-card">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6ee7b7;background:rgba(110,231,183,.08);padding:3px 9px;border-radius:6px;border:1px solid rgba(110,231,183,.2)">📊 ${r.barcode}</span>
+            ${diffHtml}
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <a href="${r.url_trendyol}" target="_blank" style="text-decoration:none;padding:10px 12px;border-radius:10px;background:rgba(255,96,0,.06);border:1px solid rgba(255,96,0,.15);display:block;transition:border-color .2s" onmouseover="this.style.borderColor='rgba(255,96,0,.4)'" onmouseout="this.style.borderColor='rgba(255,96,0,.15)'">
+              <div style="font-size:10px;color:#fb923c;font-weight:700;margin-bottom:4px">🟠 TRENDYOL</div>
+              <div style="font-size:11.5px;color:rgba(255,255,255,.6);margin-bottom:6px;line-height:1.4">${titleTy}</div>
+              <div style="font-size:15px;font-weight:800;color:#fff;font-family:'JetBrains Mono',monospace">${fmt(tyP)}</div>
+              <div class="price-bar-wrap"><div class="price-bar-bg" style="height:3px"><div class="price-bar-ty" style="width:${tyW}%"></div></div></div>
+            </a>
+            <a href="${r.url_amazon}" target="_blank" style="text-decoration:none;padding:10px 12px;border-radius:10px;background:rgba(20,160,230,.06);border:1px solid rgba(20,160,230,.15);display:block;transition:border-color .2s" onmouseover="this.style.borderColor='rgba(20,160,230,.4)'" onmouseout="this.style.borderColor='rgba(20,160,230,.15)'">
+              <div style="font-size:10px;color:#38bdf8;font-weight:700;margin-bottom:4px">🔵 AMAZON</div>
+              <div style="font-size:11.5px;color:rgba(255,255,255,.6);margin-bottom:6px;line-height:1.4">${titleAm}</div>
+              <div style="font-size:15px;font-weight:800;color:#fff;font-family:'JetBrains Mono',monospace">${fmt(amP)}</div>
+              <div class="price-bar-wrap"><div class="price-bar-bg" style="height:3px"><div class="price-bar-am" style="width:${amW}%"></div></div></div>
+            </a>
+          </div>
+        </div>`;
+      }).join('');
+    } catch(_) {}
+  }
+
+  // ── Badge products ────────────────────────────────────────────────
+  async function loadBadgeProducts() {
+    try {
+      const rows = await fetch('/badge-products').then(r=>r.json());
+      const badge = document.getElementById('badge-count-badge');
+      const list = document.getElementById('badge-products-list');
+      if (!Array.isArray(rows)||!rows.length) {
+        badge.style.display='none';
+        list.innerHTML='<div style="text-align:center;padding:40px;color:rgba(255,255,255,.2);font-size:13px">Rozet taraması bulunamadı — rozet tarayıcıyı etkinleştir ve tara</div>';
+        return;
+      }
+      badge.textContent = rows.length;
+      badge.style.display = 'inline';
+
+      list.innerHTML = rows.map(r => {
+        const disc = r.discount_rate > 0
+          ? `<span style="color:#34d399;font-size:11px;font-weight:700">%${Math.round(r.discount_rate)} indirim</span>`
+          : '';
+        const orig = r.original_price
+          ? `<span style="text-decoration:line-through;color:rgba(255,255,255,.25);font-size:11px">${fmt(r.original_price)}</span> `
+          : '';
+        const title = (r.title||'').slice(0,70)+((r.title||'').length>70?'…':'');
+        const cat = r.category || '—';
+        const ago = timeAgo(r.scraped_at);
+        return `<div class="badge-card">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;flex-wrap:wrap">
+              <span class="badge-pill">🏷️ ${r.price_badge}</span>
+              <span style="font-size:10px;color:rgba(255,255,255,.25);background:rgba(255,255,255,.05);padding:2px 7px;border-radius:6px">${cat}</span>
+              <span style="font-size:10px;color:rgba(255,255,255,.2)">${ago}</span>
+            </div>
+            <a href="${r.url}" target="_blank" style="font-size:12.5px;color:rgba(255,255,255,.75);text-decoration:none;line-height:1.5;display:block;margin-bottom:6px;transition:color .15s" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,.75)'">${title}</a>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:15px;font-weight:800;color:#f59e0b;font-family:'JetBrains Mono',monospace">${fmt(r.price)}</span>
+              ${orig}${disc}
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    } catch(_) {}
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────
+  _applyPlatformUI();
+  loadPool();
+  loadSchedule();
+  loadRecent();
+  loadMatches();
+  loadBadgeProducts();
+  loadStats();
+
+  async function shutdownApp() {
+    const btn = document.querySelector('button[onclick="shutdownApp()"]');
+    btn.textContent = 'Kapatılıyor…';
+    btn.style.pointerEvents = 'none';
+    try { await fetch('/shutdown', {method:'POST'}); } catch(_) {}
+    window.close();
+  }
+  </script>
+</body>
+</html>
