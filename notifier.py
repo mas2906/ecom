@@ -4,6 +4,8 @@ Telegram Bot bildirimleri — httpx ile Telegram Bot API çağrısı.
 
 import logging
 from dataclasses import dataclass
+from typing import Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -19,6 +21,35 @@ PLATFORM_EMOJI = {
     "amazon": "🔵",
 }
 
+PLATFORM_CODE = {
+    "trendyol": "TY",
+    "amazon": "AMZ",
+    "hepsiburada": "HB",
+}
+
+# Fiyat düşüşü mesajının alt satırındaki "bu sitede ara" linkleri.
+# Gerçek fiyat verisi taşımıyor — sadece ürün başlığıyla arama linki.
+COMPARE_LINKS = [
+    ("🟧", "Amazon", "https://www.amazon.com.tr/s?k={q}"),
+    ("🔵", "Akakçe", "https://www.akakce.com/arama/?q={q}"),
+    ("🔴", "Trendyol", "https://www.trendyol.com/sr?q={q}&qt={q}"),
+    ("🟠", "HB", "https://www.hepsiburada.com/ara?q={q}"),
+    ("🟢", "Google", "https://www.google.com/search?tbm=shop&q={q}"),
+]
+
+
+def _format_try(value: float) -> str:
+    """6533.15 -> '6.533,15 ₺', 6847.0 -> '6.847 ₺' (TR biçimi, tam sayıda ondalık yok)."""
+    s = f"{value:,.0f}" if value == int(value) else f"{value:,.2f}"
+    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{s} ₺"
+
+
+def _compare_links_line(title: str) -> str:
+    q = quote(title)
+    parts = [f'{emoji} <a href="{url.format(q=q)}">{name}</a>' for emoji, name, url in COMPARE_LINKS]
+    return "  ·  ".join(parts)
+
 
 @dataclass
 class Notifier:
@@ -27,7 +58,11 @@ class Notifier:
     min_drop_pct: float = 0.0  # 0 = her düşüşte bildir
 
     async def price_drop(
-        self, product: Product, old_price: float, new_price: float
+        self,
+        product: Product,
+        old_price: float,
+        new_price: float,
+        low_period_label: Optional[str] = None,
     ) -> None:
         if old_price <= 0 or new_price is None:
             return
@@ -36,17 +71,15 @@ class Notifier:
         if drop_pct < self.min_drop_pct:
             return
 
-        emoji = PLATFORM_EMOJI.get(product.platform, "🛍️")
-        brand_line = f" · {product.brand}" if product.brand else ""
-        seller_line = f"\n🏪 Satıcı: {product.seller}" if product.seller else ""
+        code = PLATFORM_CODE.get(product.platform, product.platform.upper())
+        period_line = f"📉 {low_period_label}\n" if low_period_label else ""
 
         text = (
-            f"📉 <b>Fiyat Düştü!</b>\n\n"
-            f'{emoji} <a href="{product.url}">{product.title[:90]}</a>\n'
-            f"<b>{product.platform.upper()}</b>{brand_line}{seller_line}\n\n"
-            f"💰 <s>{old_price:,.2f} TRY</s>  →  <b>{new_price:,.2f} TRY</b>\n"
-            f"📊 %{drop_pct:.1f} düşüş\n"
-            f"🏷️ Kategori: {product.category}"
+            f'[{code}] <a href="{product.url}">{product.title[:90]}</a>\n'
+            f"🏷 {_format_try(new_price)}  🕰️ {_format_try(old_price)}  "
+            f"⬇️ %{drop_pct:.0f}  (−{_format_try(old_price - new_price)})\n"
+            f"{period_line}\n"
+            f"{_compare_links_line(product.title)}"
         )
 
         try:

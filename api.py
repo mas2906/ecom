@@ -19,13 +19,19 @@ from pydantic import BaseModel
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from pipeline.scheduler import AdaptiveScheduler, next_interval_hours_for_category
+
 load_dotenv()
 
 _jobs: dict[str, asyncio.Queue] = {}
 _tasks: dict[str, asyncio.Task] = {}
 _SCHEDULE_FILE = Path("schedule.json")
 _POOL_FILE = Path("category_pool.json")
+_JOBS_FILE = Path("jobs.json")
 scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
+
+_adaptive_scheduler: "AdaptiveScheduler | None" = None
+_adaptive_pool = None
 
 
 # ── Category pool persistence ──────────────────────────────────────────────────
@@ -49,8 +55,13 @@ async def lifespan(app: FastAPI):
     times = _load_schedule()
     if times:
         _apply_schedule(times)
+    await _start_adaptive_scheduling()
     yield
     scheduler.shutdown(wait=False)
+    if _adaptive_scheduler:
+        _adaptive_scheduler.shutdown()
+    if _adaptive_pool:
+        await _adaptive_pool.close()
 
 
 app = FastAPI(title="Ecom Scraper", lifespan=lifespan)
@@ -147,6 +158,78 @@ async def _auto_scan() -> None:
     finally:
         if db_pool:
             await db_pool.close()
+
+
+async def _start_adaptive_scheduling() -> None:
+    """
+    jobs.json'daki her (platform, kategori) çifti için fiyat oynaklığına göre
+    adaptif tarama aralığı belirler — schedule.json'daki sabit saatlerin
+    yerine değil, onlara EK olarak çalışır. DB_URL yoksa devre dışı kalır
+    (medyan hesaplamak için price_history gerekiyor).
+    """
+    global _adaptive_scheduler, _adaptive_pool
+    logger = logging.getLogger(__name__)
+
+    db_url = os.getenv("DB_URL")
+    if not db_url:
+        logger.info("DB_URL yok — adaptif zamanlama atlandı")
+        return
+    if not _JOBS_FILE.exists():
+        return
+
+    from db import create_pool, setup_schema
+    _adaptive_pool = await create_pool(db_url)
+    await setup_schema(_adaptive_pool)
+
+    async def interval_fn(platform: str, category: str) -> float:
+        return await next_interval_hours_for_category(_adaptive_pool, platform, category)
+
+    _adaptive_scheduler = AdaptiveScheduler(interval_fn=interval_fn, callback=_run_adaptive_job)
+    _adaptive_scheduler.start()
+
+    jobs = json.loads(_JOBS_FILE.read_text(encoding="utf-8"))
+    for job in jobs:
+        category = job.get("category", "")
+        if not category:
+            continue
+        for platform in job.get("platforms", []):
+            await _adaptive_scheduler.schedule(platform, category)
+    logger.info("Adaptif zamanlama başladı (%d iş)", len(jobs))
+
+
+async def _run_adaptive_job(platform: str, category: str) -> None:
+    """Tek bir (platform, kategori) işini çalıştırır — jobs.json'daki sayfa sayısını kullanır."""
+    logger = logging.getLogger(__name__)
+    if not _JOBS_FILE.exists():
+        return
+    jobs = json.loads(_JOBS_FILE.read_text(encoding="utf-8"))
+    job = next(
+        (j for j in jobs if j.get("category") == category and platform in j.get("platforms", [])),
+        None,
+    )
+    if not job:
+        return
+
+    from main import SCRAPER_MAP, run_platform
+    if platform not in SCRAPER_MAP:
+        return
+    from storage import Storage
+
+    notifier = None
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat = os.getenv("TELEGRAM_CHAT_ID")
+    if token and chat:
+        from notifier import Notifier
+        notifier = Notifier(
+            token=token, chat_id=chat,
+            min_drop_pct=float(os.getenv("TELEGRAM_MIN_DROP_PCT", "0")),
+        )
+
+    logger.info("🔄 Adaptif tarama: %s / %s", platform, category)
+    storage = Storage("./output", db_pool=_adaptive_pool, notifier=notifier)
+    count = await run_platform(platform, category, job.get("pages", 3), storage)
+    await storage.flush()
+    logger.info("  ✓ adaptif %s / %s → %d ürün", platform, category, count)
 
 
 async def _notify_cross_matches(pool, notifier) -> None:
@@ -567,4 +650,6 @@ async def shutdown():
 
 
 if __name__ == "__main__":
-    uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=False)
+    import os as _os
+    dev = _os.getenv("ENV", "dev") != "prod"
+    uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=dev, reload_dirs=["."])

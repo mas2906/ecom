@@ -66,13 +66,31 @@ class Storage:
 
     async def _save_to_db(self, product: Product) -> None:
         from db import save_product  # geç import — db opsiyonel
+        from pipeline.change_engine import detect_drop, lowest_price_period
+        from pipeline.fanout import notify_watchers
         try:
-            prev_price = await save_product(self._db_pool, product)
+            opportunity = None
+            low_period_label = None
+            if self._notifier and product.price is not None:
+                # Kaydetmeden ÖNCE hesapla — yoksa 30 günlük medyan az önce
+                # eklenen fiyatı da içerip kendi kendini kirletir.
+                opportunity = await detect_drop(
+                    self._db_pool, product.platform, product.product_id, product.price
+                )
+                if opportunity is not None:
+                    low_period_label = await lowest_price_period(
+                        self._db_pool, product.platform, product.product_id, product.price
+                    )
+
+            await save_product(self._db_pool, product)
 
             if self._notifier and product.price is not None:
-                # Fiyat düşüşü bildirimi
-                if prev_price is not None and product.price < prev_price:
-                    await self._notifier.price_drop(product, prev_price, product.price)
+                # Fiyat düşüşü bildirimi — 30 günlük medyana göre (DEĞİŞİKLİK MOTORU)
+                if opportunity is not None:
+                    await self._notifier.price_drop(
+                        product, opportunity.median_30d, opportunity.new_price, low_period_label
+                    )
+                    await notify_watchers(self._db_pool, opportunity, product.title, product.url)
 
                 # Amazon "en düşük fiyat" rozeti bildirimi
                 if product.price_badge:

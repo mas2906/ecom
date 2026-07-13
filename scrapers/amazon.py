@@ -9,7 +9,7 @@ import logging
 import random
 import re
 from typing import AsyncIterator, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, parse_qs, urlencode, urlunparse
 
 from playwright.async_api import (
     async_playwright,
@@ -26,14 +26,35 @@ from .base import BaseScraper
 logger = logging.getLogger(__name__)
 
 BASE = "https://www.amazon.com.tr"
-VIEWPORT = {"width": 1366, "height": 768}
+
+# Gerçek kullanıcı viewport boyutları — her oturumda biri seçilir
+_VIEWPORTS = [
+    {"width": 1920, "height": 1080},
+    {"width": 1440, "height": 900},
+    {"width": 1366, "height": 768},
+    {"width": 1536, "height": 864},
+    {"width": 1280, "height": 800},
+    {"width": 1600, "height": 900},
+]
+
+
+def _build_amazon_url(category: str, page: int) -> str:
+    """Keyword ya da Amazon URL'si için sayfa URL'si oluşturur."""
+    if category.startswith("http://") or category.startswith("https://"):
+        parsed = urlparse(category)
+        params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        params["page"] = str(page)
+        params.setdefault("language", "tr_TR")
+        return urlunparse(parsed._replace(query=urlencode(params)))
+    return f"{BASE}/s?k={quote(category)}&page={page}&language=tr_TR"
 
 
 class AmazonScraper(BaseScraper):
     async def scrape_category(
         self, category: str, max_pages: int = 5
     ) -> AsyncIterator[Product]:
-        seen_asins: set[str] = set()   # sayfalararası ASIN tekil alma
+        seen_asins: set[str] = set()
+        viewport = random.choice(_VIEWPORTS)
 
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
@@ -43,17 +64,18 @@ class AmazonScraper(BaseScraper):
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-web-security",
-                    f"--window-size={VIEWPORT['width']},{VIEWPORT['height']}",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                    f"--window-size={viewport['width']},{viewport['height']}",
                 ],
             )
-            ctx = await _new_context(browser)
+            ctx = await _new_context(browser, viewport)
             page = await ctx.new_page()
             await Stealth().apply_stealth_async(page)
 
             try:
                 for page_num in range(1, max_pages + 1):
-                    url = f"{BASE}/s?k={quote(category)}&page={page_num}&language=tr_TR"
-                    logger.info("[Amazon] sayfa %d / %d — '%s'", page_num, max_pages, category)
+                    url = _build_amazon_url(category, page_num)
+                    logger.info("[Amazon] sayfa %d / %d — '%s'", page_num, max_pages, category[:60])
 
                     products = await self._scrape_page(page, url, category, page_num)
 
@@ -251,17 +273,26 @@ class AmazonScraper(BaseScraper):
 # Yardımcı fonksiyonlar
 # ------------------------------------------------------------------
 
-async def _new_context(browser) -> BrowserContext:
+_CHROME_UAS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+]
+
+
+async def _new_context(browser, viewport: dict) -> BrowserContext:
+    ua = random.choice(_CHROME_UAS)
     return await browser.new_context(
-        viewport=VIEWPORT,
+        viewport=viewport,
+        screen={"width": viewport["width"], "height": viewport["height"]},
         locale="tr-TR",
         timezone_id="Europe/Istanbul",
         ignore_https_errors=True,
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
+        user_agent=ua,
+        color_scheme="light",
+        device_scale_factor=random.choice([1, 1, 1, 2]),  # çoğunlukla 1
         extra_http_headers={
             "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
         },
@@ -270,32 +301,58 @@ async def _new_context(browser) -> BrowserContext:
 
 async def _human_scroll(page: Page) -> None:
     """
-    Kademeli + rastgele geri-scroll içeren insan benzeri kaydırma.
-    Lazy-load içeriklerini tetikler, bot tespitini engeller.
+    Gerçek kullanıcı kaydırma simülasyonu:
+    - Gaussian adım boyutu (küçük sıçramaları da kapsar)
+    - Zaman zaman duraksama ("okuma" molası)
+    - %30 olasılıkla geri kaydırma
+    - Rastgele fare hareketi
+    - Tüm lazy-load'ları tetiklemek için sayfa sonuna iniş
     """
     try:
         total_height = await page.evaluate("document.body.scrollHeight")
+        vp_height = await page.evaluate("window.innerHeight")
         current = 0
-        steps = random.randint(6, 12)
+        steps = random.randint(8, 16)
 
-        for _ in range(steps):
-            step = random.randint(400, 900)
+        for i in range(steps):
+            # Gaussian adım: ortalama vp * 0.6, std vp * 0.25
+            step = max(100, int(random.gauss(vp_height * 0.6, vp_height * 0.25)))
             current = min(current + step, total_height)
-            await page.evaluate(f"window.scrollTo(0, {current})")
-            await asyncio.sleep(random.uniform(0.4, 1.3))
+            await page.evaluate(f"window.scrollTo({{top: {current}, behavior: 'smooth'}})")
+            await asyncio.sleep(random.uniform(0.5, 1.8))
 
-            # %25 ihtimalle biraz yukarı geri kaydır (gerçek kullanıcı davranışı)
-            if random.random() < 0.25:
-                back = random.randint(150, 400)
+            # %15 ihtimalle "bir ürüne bakıyormuş gibi" uzun duraklama
+            if random.random() < 0.15:
+                await asyncio.sleep(random.uniform(1.5, 4.0))
+
+            # %30 ihtimalle geri kaydırma
+            if random.random() < 0.30:
+                back = random.randint(200, min(600, current))
                 current = max(0, current - back)
-                await page.evaluate(f"window.scrollTo(0, {current})")
-                await asyncio.sleep(random.uniform(0.3, 0.8))
+                await page.evaluate(f"window.scrollTo({{top: {current}, behavior: 'smooth'}})")
+                await asyncio.sleep(random.uniform(0.4, 1.0))
 
-        # Tüm lazy-load ürünlerin DOM'a gelmesi için sayfanın en altına in
+            # Rastgele fare hareketi (fingerprint için)
+            if random.random() < 0.40:
+                try:
+                    vp_w = await page.evaluate("window.innerWidth")
+                    await page.mouse.move(
+                        random.randint(100, vp_w - 100),
+                        random.randint(100, vp_height - 100),
+                    )
+                    await asyncio.sleep(random.uniform(0.1, 0.4))
+                except Exception:
+                    pass
+
+            if current >= total_height:
+                break
+
+        # Tüm lazy-load içeriklerin gelmesi için alta in
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await asyncio.sleep(random.uniform(0.5, 1.5))
+        await asyncio.sleep(random.uniform(1.0, 2.5))
+        # Başa dön (gerçek kullanıcı genellikle sayfayı okuduktan sonra)
         await page.evaluate("window.scrollTo(0, 0)")
-        await asyncio.sleep(random.uniform(0.3, 0.7))
+        await asyncio.sleep(random.uniform(0.5, 1.2))
     except Exception:
         pass
 

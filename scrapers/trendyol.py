@@ -27,6 +27,9 @@ from pathlib import Path
 from typing import AsyncIterator, Optional
 from urllib.parse import quote, urlparse, parse_qs, urlencode, urlunparse
 
+from playwright.async_api import async_playwright, Page, TimeoutError as PWTimeout
+from playwright_stealth import Stealth
+
 # Hem doğrudan çalıştırma hem de paket içi import için yol ayarı
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
@@ -37,6 +40,23 @@ from .base import BaseScraper
 log = logging.getLogger(__name__)
 
 BASE = "https://www.trendyol.com"
+
+# Gerçek kullanıcı viewport boyutları
+_VIEWPORTS = [
+    {"width": 1920, "height": 1080},
+    {"width": 1440, "height": 900},
+    {"width": 1366, "height": 768},
+    {"width": 1536, "height": 864},
+    {"width": 1280, "height": 800},
+]
+
+_CHROME_UAS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +86,6 @@ _STATE_PATTERNS = [
     re.compile(r"window\.__SEARCH_STATE__\s*=\s*(\{.+?\});\s*(?:window|</script)", re.DOTALL),
 ]
 
-# JSON içinde ürün listesini bulmak için olası anahtar yolları
 _PRODUCT_PATHS = [
     ["searchResult", "result", "products"],
     ["search", "products"],
@@ -75,16 +94,51 @@ _PRODUCT_PATHS = [
     ["products"],
 ]
 
-# Küçük parça: doğrudan products dizisi
 _PRODUCTS_ARRAY_PAT = re.compile(
     r'"products"\s*:\s*(\[.+?\])\s*,\s*"(?:facets|filters|pagination)"',
     re.DOTALL,
 )
 
 
+def _extract_json_value(html: str, key: str) -> dict | None:
+    """window["key"] = {...}; bloğunu bracket-sayacı ile parse eder."""
+    marker = f'"{key}"'
+    idx = html.find(marker)
+    if idx == -1:
+        return None
+    eq = html.find("=", idx + len(marker))
+    if eq == -1:
+        return None
+    start = html.find("{", eq)
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, min(start + 300_000, len(html))):
+        c = html[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(html[start : i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
 def _extract_products_from_html(html: str) -> list[dict]:
     """HTML'den ürün listesini JSON olarak çıkarır."""
 
+    # Yeni format: window["__single-search-result__PROPS"].data.products
+    props = _extract_json_value(html, "__single-search-result__PROPS")
+    if props:
+        products = (props.get("data") or {}).get("products")
+        if isinstance(products, list) and products:
+            log.debug("Ürünler __single-search-result__PROPS'tan alındı (%d adet)", len(products))
+            return products
+
+    # Eski format: window.__INITIAL_STATE__ / window.__SEARCH_STATE__
     for pat in _STATE_PATTERNS:
         m = pat.search(html)
         if not m:
@@ -103,7 +157,7 @@ def _extract_products_from_html(html: str) -> list[dict]:
         except json.JSONDecodeError:
             continue
 
-    # Küçük parça fallback
+    # Son çare: products dizisini doğrudan yakala
     m = _PRODUCTS_ARRAY_PAT.search(html)
     if m:
         try:
@@ -136,9 +190,14 @@ def _to_int(val) -> Optional[int]:
 def _price_fields(raw: dict) -> tuple[Optional[float], Optional[float], Optional[float]]:
     p = raw.get("price") or {}
     if isinstance(p, dict):
-        sale  = _num(p.get("sellingPrice") or p.get("discountedPrice") or p.get("salePrice"))
-        orig  = _num(p.get("originalPrice") or p.get("listPrice"))
-        disc  = _num(p.get("discountRatio") or p.get("discountRate"))
+        sale = _num(
+            p.get("current") or p.get("discountedPrice") or
+            p.get("sellingPrice") or p.get("salePrice")
+        )
+        orig = _num(
+            p.get("old") or p.get("originalPrice") or p.get("listPrice")
+        )
+        disc = _num(p.get("discountRatio") or p.get("discountRate"))
         price = sale or orig
     else:
         price = _num(p)
@@ -180,7 +239,8 @@ def _parse_product(raw: dict, category: str) -> Optional[Product]:
         rating = None
 
     seller_raw = raw.get("seller") or raw.get("merchantName") or {}
-    seller = (seller_raw.get("name") if isinstance(seller_raw, dict) else str(seller_raw)).strip() or None
+    seller_str = seller_raw.get("name") if isinstance(seller_raw, dict) else str(seller_raw)
+    seller = seller_str.strip() if seller_str else None
 
     in_stock: bool = bool(raw.get("inStock", True))
 
@@ -229,16 +289,103 @@ def _parse_page(html: str, category: str, page_num: int) -> list[Product]:
 
 
 # ---------------------------------------------------------------------------
-# Scraper — ScraperSession kullanır (anti_ban.py)
+# Playwright yardımcıları
+# ---------------------------------------------------------------------------
+
+_WARMUP_PATHS = [
+    "/kadin", "/erkek", "/elektronik",
+    "/spor-outdoor", "/ev-yasam", "/kozmetik-kisisel-bakim",
+]
+
+
+async def _new_trendyol_page(browser):
+    """Her oturum için rastgele viewport + UA ile yeni sayfa açar."""
+    viewport = random.choice(_VIEWPORTS)
+    ua = random.choice(_CHROME_UAS)
+    ctx = await browser.new_context(
+        viewport=viewport,
+        screen={"width": viewport["width"], "height": viewport["height"]},
+        locale="tr-TR",
+        timezone_id="Europe/Istanbul",
+        ignore_https_errors=True,
+        user_agent=ua,
+        color_scheme="light",
+        extra_http_headers={"Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"},
+    )
+    page = await ctx.new_page()
+    await Stealth().apply_stealth_async(page)
+    return page
+
+
+async def _warmup_page(page: Page) -> None:
+    """Ana sayfa + rastgele kategori ziyareti ile oturum ısıtır."""
+    try:
+        await page.goto(BASE, wait_until="domcontentloaded", timeout=30_000)
+        await asyncio.sleep(random.uniform(2.0, 4.0))
+        await _human_scroll(page)
+
+        if random.random() < 0.65:
+            path = random.choice(_WARMUP_PATHS)
+            await page.goto(f"{BASE}{path}", wait_until="domcontentloaded", timeout=25_000)
+            await asyncio.sleep(random.uniform(1.5, 3.0))
+    except Exception as exc:
+        log.debug("Isınma kısmen başarısız: %s", exc)
+
+
+async def _human_scroll(page: Page) -> None:
+    """Gerçek kullanıcı kaydırma simülasyonu — lazy-load tetikler."""
+    try:
+        vp_h = await page.evaluate("window.innerHeight")
+        total = await page.evaluate("document.body.scrollHeight")
+        current = 0
+        steps = random.randint(5, 10)
+
+        for _ in range(steps):
+            step = max(150, int(random.gauss(vp_h * 0.55, vp_h * 0.2)))
+            current = min(current + step, total)
+            await page.evaluate(f"window.scrollTo({{top:{current},behavior:'smooth'}})")
+            await asyncio.sleep(random.uniform(0.4, 1.4))
+
+            if random.random() < 0.25:
+                back = random.randint(100, min(400, current))
+                current = max(0, current - back)
+                await page.evaluate(f"window.scrollTo({{top:{current},behavior:'smooth'}})")
+                await asyncio.sleep(random.uniform(0.3, 0.8))
+
+            # %10 ihtimalle ürüne bakıyormuş gibi duraklama
+            if random.random() < 0.10:
+                await asyncio.sleep(random.uniform(1.5, 3.5))
+
+            if current >= total:
+                break
+
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await asyncio.sleep(random.uniform(0.8, 1.8))
+        await page.evaluate("window.scrollTo(0, 0)")
+        await asyncio.sleep(random.uniform(0.3, 0.8))
+    except Exception:
+        pass
+
+
+def _is_blocked(html: str) -> bool:
+    """Cloudflare / bot engeli sinyalleri."""
+    if len(html) < 2_000:
+        return True
+    signals = ["Just a moment", "cf-browser-verification",
+                "Checking your browser", "DDoS protection by Cloudflare"]
+    lower = html.lower()
+    return any(s.lower() in lower for s in signals)
+
+
+# ---------------------------------------------------------------------------
+# Scraper — Playwright + stealth
 # ---------------------------------------------------------------------------
 
 class TrendyolScraper(BaseScraper):
     """
-    curl-cffi tabanlı Trendyol scraper.
-    HTTP isteklerini ScraperSession üzerinden gönderir:
-      - Chrome TLS parmak izi taklidi
-      - Otomatik rate-limit backoff (429/403/503)
-      - İnsan-benzeri gecikmeler ve UA rotasyonu
+    Playwright + playwright-stealth tabanlı Trendyol scraper.
+    Gerçek Chromium açar → Cloudflare JS challenge'larını geçer.
+    Rastgele viewport, UA, scroll ve zamanlama ile bot tespiti engellenir.
     """
 
     async def scrape_category(
@@ -246,32 +393,97 @@ class TrendyolScraper(BaseScraper):
     ) -> AsyncIterator[Product]:
         label = category[:60]
 
-        # İlk istek: ana sayfayı ziyaret et (çerez al)
-        try:
-            await self.session.get(BASE)
-            await asyncio.sleep(random.uniform(1.0, 2.5))
-        except Exception:
-            pass
-
-        for page_num in range(1, max_pages + 1):
-            url = _build_url(category, page_num)
-            log.info("[Trendyol] sayfa %d — %s", page_num, label)
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                ],
+            )
+            page = await _new_trendyol_page(browser)
 
             try:
-                resp = await self.session.get(url, referer=BASE)
-                html = resp.text
+                # Isınma — Cloudflare oturum çerezi alır
+                log.info("[Trendyol] Isınma navigasyonu…")
+                await _warmup_page(page)
+
+                consecutive_empty = 0
+
+                for page_num in range(1, max_pages + 1):
+                    url = _build_url(category, page_num)
+                    log.info("[Trendyol] sayfa %d — %s", page_num, label)
+
+                    html = await self._load_page(page, url, page_num)
+                    if html is None:
+                        break
+
+                    products = _parse_page(html, category, page_num)
+
+                    if not products:
+                        consecutive_empty += 1
+                        log.info(
+                            "Sayfa %d boş (arka arkaya %d).",
+                            page_num, consecutive_empty,
+                        )
+                        if consecutive_empty >= 2:
+                            log.info("2 arka arkaya boş — duruyoruz.")
+                            break
+                        await asyncio.sleep(random.uniform(8.0, 18.0))
+                        continue
+
+                    consecutive_empty = 0
+                    log.info("  -> %d ürün (sayfa %d)", len(products), page_num)
+                    for p in products:
+                        yield p
+
+                    if page_num < max_pages:
+                        await asyncio.sleep(random.uniform(3.0, 7.0))
+
+            finally:
+                await browser.close()
+
+    async def _load_page(self, page: Page, url: str, page_num: int) -> str | None:
+        """
+        Sayfayı yükle, scroll yap, HTML döndür.
+        Cloudflare challenge varsa kısa bekle ve tekrar dene.
+        """
+        for attempt in range(2):
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            except PWTimeout:
+                log.warning("[Trendyol] Sayfa %d zaman aşımı (deneme %d/2)", page_num, attempt + 1)
+                if attempt == 0:
+                    await asyncio.sleep(random.uniform(5.0, 12.0))
+                    continue
+                return None
             except Exception as exc:
-                log.warning("Sayfa %d alınamadı: %s", page_num, exc)
-                break
+                log.warning("[Trendyol] Sayfa %d yükleme hatası: %s", page_num, exc)
+                return None
 
-            products = _parse_page(html, category, page_num)
-            if not products:
-                log.info("Sayfa %d boş veya bot koruması, duruluyor.", page_num)
-                break
+            # Sayfanın tam yüklenmesini bekle — ağ hızına göre değişir
+            await asyncio.sleep(random.uniform(2.5, 5.0))
+            html = await page.content()
 
-            log.info("  -> %d ürün (sayfa %d)", len(products), page_num)
-            for p in products:
-                yield p
+            if _is_blocked(html):
+                log.warning(
+                    "[Trendyol] Bot koruması algılandı (sayfa %d, deneme %d/2)",
+                    page_num, attempt + 1,
+                )
+                if attempt == 0:
+                    await asyncio.sleep(random.uniform(15.0, 30.0))
+                    continue
+                log.warning("İkinci denemede de bloklandı.")
+                return None
+
+            await _human_scroll(page)
+            # Scroll sonrası yeniden al — lazy-load içerik gelmiş olabilir
+            html = await page.content()
+            return html
+
+        return None
 
 
 # ---------------------------------------------------------------------------

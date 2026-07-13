@@ -1,0 +1,12 @@
+{
+  "sequence_counter": 1,
+  "forefront_sequence_counter": 0,
+  "forefront_requests": {},
+  "regular_requests": {
+    "https://www.trendyol.com/sr?os=1&pi=1&q=kulakl%c4%b1k&qt=kulakl%c4%b1k&st=kulakl%c4%b1k": 0
+  },
+  "in_progress_requests": [],
+  "handled_requests": [
+    "https://www.trendyol.com/sr?os=1&pi=1&q=kulakl%c4%b1k&qt=kulakl%c4%b1k&st=kulakl%c4%b1k"
+  ]
+}

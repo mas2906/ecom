@@ -55,15 +55,26 @@ PLATFORM_COLORS = {
 }
 
 
+def _url_platform(category: str) -> Optional[str]:
+    """Kategori bir URL ise hangi platforma ait olduğunu döndürür, keyword ise None."""
+    if not (category.startswith("http://") or category.startswith("https://")):
+        return None
+    if "trendyol.com" in category:
+        return "trendyol"
+    if "amazon.com" in category:
+        return "amazon"
+    return None
+
+
 async def run_platform(
     platform: str,
     category: str,
     max_pages: int,
     storage: Storage,
 ) -> int:
-    # URL tabanlı kategoriler yalnızca Trendyol için geçerlidir
-    if platform != "trendyol" and (category.startswith("http://") or category.startswith("https://")):
-        logger.info("URL kategori sadece Trendyol'da çalışır — %s atlanıyor: %s", platform, category[:60])
+    url_plt = _url_platform(category)
+    if url_plt and platform != url_plt:
+        logger.info("URL sadece '%s' için — %s atlanıyor", url_plt, platform)
         return 0
 
     config = PLATFORMS[platform]

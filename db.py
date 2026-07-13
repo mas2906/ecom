@@ -62,6 +62,33 @@ CREATE INDEX IF NOT EXISTS idx_products_barcode
     WHERE barcode IS NOT NULL;
 """
 
+_CREATE_WATCHES = """
+CREATE TABLE IF NOT EXISTS watches (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        TEXT NOT NULL,
+    platform       TEXT NOT NULL,
+    product_id     TEXT NOT NULL,
+    target_price   REAL,
+    created_at     TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, platform, product_id)
+);
+"""
+
+_CREATE_INDEX_WATCHES = """
+CREATE INDEX IF NOT EXISTS idx_watches_product
+    ON watches(platform, product_id);
+"""
+
+_CREATE_FCM_TOKENS = """
+CREATE TABLE IF NOT EXISTS fcm_tokens (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    token       TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, token)
+);
+"""
+
 _UPSERT_PRODUCT = """
 INSERT INTO products
     (platform, product_id, category, title, brand, url, barcode, price_badge, seller, in_stock, currency)
@@ -142,6 +169,43 @@ SELECT product_id, platform, url FROM products
 WHERE barcode IS NULL AND url IS NOT NULL
 """
 
+_GET_PRICE_HISTORY_SINCE = """
+SELECT price FROM price_history
+WHERE platform = ? AND product_id = ? AND price IS NOT NULL
+    AND scraped_at >= datetime('now', ?)
+ORDER BY scraped_at ASC;
+"""
+
+_GET_PRICE_HISTORY_FOR_CATEGORY = """
+SELECT ph.price FROM price_history ph
+JOIN products p ON p.platform = ph.platform AND p.product_id = ph.product_id
+WHERE ph.platform = ? AND p.category = ? AND ph.price IS NOT NULL
+    AND ph.scraped_at >= datetime('now', ?)
+ORDER BY ph.scraped_at ASC;
+"""
+
+_UPSERT_WATCH = """
+INSERT INTO watches (user_id, platform, product_id, target_price)
+VALUES (?, ?, ?, ?)
+ON CONFLICT (user_id, platform, product_id) DO UPDATE SET
+    target_price = excluded.target_price;
+"""
+
+_GET_WATCHERS = """
+SELECT user_id, target_price FROM watches
+WHERE platform = ? AND product_id = ?;
+"""
+
+_UPSERT_FCM_TOKEN = """
+INSERT INTO fcm_tokens (user_id, token)
+VALUES (?, ?)
+ON CONFLICT (user_id, token) DO NOTHING;
+"""
+
+_GET_FCM_TOKENS = """
+SELECT token FROM fcm_tokens WHERE user_id = ?;
+"""
+
 
 # ── Pool wrapper (asyncpg-uyumlu arayüz) ──────────────────────────────────────
 
@@ -213,7 +277,10 @@ async def setup_schema(pool: SQLitePool) -> None:
             await conn.execute(_CREATE_INDEX_BARCODE)
         except Exception:
             pass
-    logger.info("DB şeması hazır (products + price_history)")
+        await conn.execute(_CREATE_WATCHES)
+        await conn.execute(_CREATE_INDEX_WATCHES)
+        await conn.execute(_CREATE_FCM_TOKENS)
+    logger.info("DB şeması hazır (products + price_history + watches + fcm_tokens)")
 
 
 async def get_last_price(
@@ -294,3 +361,44 @@ async def fetch_without_barcode(pool: SQLitePool, platform: Optional[str] = None
     async with pool.acquire() as conn:
         rows = await conn.fetch(q, *args)
     return rows
+
+
+async def get_price_history(
+    pool: SQLitePool, platform: str, product_id: str, since: str = "-30 days"
+) -> list[float]:
+    """Belirtilen aralıktaki (varsayılan: son 30 gün) fiyat listesini döndürür."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_GET_PRICE_HISTORY_SINCE, platform, product_id, since)
+    return [float(r["price"]) for r in rows]
+
+
+async def get_price_history_for_category(
+    pool: SQLitePool, platform: str, category: str, since: str = "-30 days"
+) -> list[float]:
+    """Bir kategorideki tüm ürünlerin belirtilen aralıktaki fiyatlarını döndürür."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_GET_PRICE_HISTORY_FOR_CATEGORY, platform, category, since)
+    return [float(r["price"]) for r in rows]
+
+
+async def add_watch(
+    pool: SQLitePool, user_id: str, platform: str, product_id: str, target_price: Optional[float] = None
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(_UPSERT_WATCH, user_id, platform, product_id, target_price)
+
+
+async def get_watchers(pool: SQLitePool, platform: str, product_id: str) -> list[dict]:
+    async with pool.acquire() as conn:
+        return await conn.fetch(_GET_WATCHERS, platform, product_id)
+
+
+async def save_fcm_token(pool: SQLitePool, user_id: str, token: str) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(_UPSERT_FCM_TOKEN, user_id, token)
+
+
+async def get_fcm_tokens(pool: SQLitePool, user_id: str) -> list[str]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_GET_FCM_TOKENS, user_id)
+    return [r["token"] for r in rows]
