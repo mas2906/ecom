@@ -32,7 +32,7 @@ from anti_ban import ScraperSession
 from scrapers import AmazonScraper, TrendyolScraper
 from storage import Storage
 
-load_dotenv()
+load_dotenv("ignored/.env")
 
 console = Console()
 
@@ -126,7 +126,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--platform", choices=list(SCRAPER_MAP.keys()), help="Hedef platform")
     p.add_argument("--category", help="Arama terimi veya kategori adı")
     p.add_argument("--pages", type=int, default=5, help="Maksimum sayfa sayısı (varsayılan: 5)")
-    p.add_argument("--output", default="./output", help="Çıktı klasörü (varsayılan: ./output)")
+    p.add_argument("--output", default="./ignored/output", help="Çıktı klasörü (varsayılan: ./ignored/output)")
     p.add_argument("--all", action="store_true", help="Tüm platformlarda sırayla çalıştır")
     p.add_argument(
         "--jobs",

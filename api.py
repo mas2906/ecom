@@ -21,7 +21,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from pipeline.scheduler import AdaptiveScheduler, next_interval_hours_for_category
 
-load_dotenv()
+load_dotenv("ignored/.env")
 
 _jobs: dict[str, asyncio.Queue] = {}
 _tasks: dict[str, asyncio.Task] = {}
@@ -134,7 +134,7 @@ async def _auto_scan() -> None:
                             min_drop_pct=float(os.getenv("TELEGRAM_MIN_DROP_PCT", "0")))
 
     try:
-        storage = Storage("./output", db_pool=db_pool, notifier=notifier)
+        storage = Storage("./ignored/output", db_pool=db_pool, notifier=notifier)
         for job in jobs:
             category = job.get("category", "")
             pages = job.get("pages", 3)
@@ -226,7 +226,7 @@ async def _run_adaptive_job(platform: str, category: str) -> None:
         )
 
     logger.info("🔄 Adaptif tarama: %s / %s", platform, category)
-    storage = Storage("./output", db_pool=_adaptive_pool, notifier=notifier)
+    storage = Storage("./ignored/output", db_pool=_adaptive_pool, notifier=notifier)
     count = await run_platform(platform, category, job.get("pages", 3), storage)
     await storage.flush()
     logger.info("  ✓ adaptif %s / %s → %d ürün", platform, category, count)
@@ -339,7 +339,7 @@ async def _run(job_id: str, req: ScrapeRequest, q: asyncio.Queue):
     total = 0
     cancelled = False
     try:
-        storage = Storage("./output", db_pool=db_pool, notifier=notifier)
+        storage = Storage("./ignored/output", db_pool=db_pool, notifier=notifier)
 
         async def _scrape_one(platform: str, category: str) -> int:
             q.put_nowait({"type": "log", "level": "INFO",

@@ -13,16 +13,17 @@ echo "==> Playwright Chromium indiriliyor..."
 playwright install chromium
 
 echo ""
-echo "==> .env dosyası oluşturuluyor (yoksa)..."
-if [ ! -f .env ]; then
-    cp .env.example .env
-    echo "  → .env oluşturuldu. DB_URL ve Telegram bilgilerini düzenle."
+echo "==> ignored/.env dosyası oluşturuluyor (yoksa)..."
+mkdir -p ignored
+if [ ! -f ignored/.env ]; then
+    cp .env.example ignored/.env
+    echo "  → ignored/.env oluşturuldu. DB_URL ve Telegram bilgilerini düzenle."
 fi
 
 echo ""
 echo "Kurulum tamamlandı!"
 echo ""
-echo "1) .env dosyasını düzenle:"
+echo "1) ignored/.env dosyasını düzenle:"
 echo "   DB_URL=postgresql://postgres:sifre@localhost:5432/ecom_scraper"
 echo "   TELEGRAM_TOKEN=..."
 echo "   TELEGRAM_CHAT_ID=..."

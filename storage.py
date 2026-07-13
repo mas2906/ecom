@@ -27,7 +27,7 @@ FIELDS = [
 class Storage:
     def __init__(
         self,
-        output_dir: str = "./output",
+        output_dir: str = "./ignored/output",
         db_pool=None,
         notifier=None,          # notifier.Notifier | None
     ):

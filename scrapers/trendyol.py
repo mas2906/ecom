@@ -493,7 +493,7 @@ class TrendyolScraper(BaseScraper):
 
 async def _run_standalone(query: str, max_pages: int) -> None:
     from dotenv import load_dotenv
-    load_dotenv(_ROOT / ".env")
+    load_dotenv(_ROOT / "ignored" / ".env")
 
     from config import PLATFORMS
     from anti_ban import ScraperSession
@@ -519,7 +519,7 @@ async def _run_standalone(query: str, max_pages: int) -> None:
         notifier = Notifier(token=tg_token, chat_id=tg_chat, min_drop_pct=min_drop)
         print(f"Telegram bildirimleri aktif (min düşüş: %{min_drop:.1f})")
 
-    storage = Storage(str(_ROOT / "output"), db_pool=db_pool, notifier=notifier)
+    storage = Storage(str(_ROOT / "ignored" / "output"), db_pool=db_pool, notifier=notifier)
 
     async with ScraperSession(PLATFORMS["trendyol"]) as session:
         scraper = TrendyolScraper(session)
