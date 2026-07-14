@@ -15,12 +15,6 @@ logger = logging.getLogger(__name__)
 
 _API = "https://api.telegram.org/bot{token}/sendMessage"
 
-PLATFORM_EMOJI = {
-    "trendyol": "🟠",
-    "hepsiburada": "🔴",
-    "amazon": "🔵",
-}
-
 PLATFORM_CODE = {
     "trendyol": "TY",
     "amazon": "AMZ",
@@ -103,31 +97,26 @@ class Notifier:
         except Exception as exc:
             logger.warning("Telegram gönderilemedi: %s", exc)
 
-    async def price_badge_alert(self, product: Product) -> None:
-        """Amazon 'en düşük fiyat' rozeti bildirimi."""
-        emoji = PLATFORM_EMOJI.get(product.platform, "🛍️")
+    async def price_badge_alert(self, product: Product, old_price: Optional[float] = None) -> None:
+        """Platformun kendi rozeti (örn. Amazon '60 günün en düşük fiyatı') — price_drop ile aynı şablon."""
+        code = PLATFORM_CODE.get(product.platform, product.platform.upper())
+        new_price = product.price
         badge = product.price_badge or ""
 
-        # Rozet metninden süreyi çıkar (60 gün, 30 gün, yıl vb.)
-        import re as _re
-        period_m = _re.search(r'(\d+)\s*gün', badge, _re.IGNORECASE)
-        if period_m:
-            period = f"{period_m.group(1)} günün"
-        elif "yıl" in badge.lower():
-            period = "Yılın"
+        if old_price is not None and new_price is not None and old_price > 0 and old_price != new_price:
+            drop_pct = (old_price - new_price) / old_price * 100
+            price_line = (
+                f"🏷 {_format_try(new_price)}  🕰️ {_format_try(old_price)}  "
+                f"⬇️ %{drop_pct:.0f}  (−{_format_try(old_price - new_price)})"
+            )
         else:
-            period = "Tarihi"
-
-        price_str = f"{product.price:,.2f} TRY" if product.price else "—"
-        brand_line = f" · {product.brand}" if product.brand else ""
+            price_line = f"🏷 {_format_try(new_price)}" if new_price is not None else "🏷 —"
 
         text = (
-            f"🏷️ <b>{period} en düşük fiyatı!</b>\n\n"
-            f'{emoji} <a href="{product.url}">{product.title[:90]}</a>\n'
-            f"<b>{product.platform.upper()}</b>{brand_line}\n\n"
-            f"💰 Fiyat: <b>{price_str}</b>\n"
-            f"📌 Rozet: <i>{badge}</i>\n"
-            f"🏷️ Kategori: {product.category}"
+            f'[{code}] <a href="{product.url}">{product.title[:90]}</a>\n'
+            f"{price_line}\n"
+            f"📉 {badge}\n\n"
+            f"{_compare_links_line(product.title)}"
         )
 
         try:

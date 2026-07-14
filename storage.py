@@ -65,21 +65,26 @@ class Storage:
             await self._save_to_db(product)
 
     async def _save_to_db(self, product: Product) -> None:
-        from db import save_product  # geç import — db opsiyonel
+        from db import get_last_price, save_product  # geç import — db opsiyonel
         from pipeline.change_engine import detect_drop, lowest_price_period
         from pipeline.fanout import notify_watchers
         try:
             opportunity = None
             low_period_label = None
+            badge_old_price = None
             if self._notifier and product.price is not None:
-                # Kaydetmeden ÖNCE hesapla — yoksa 30 günlük medyan az önce
-                # eklenen fiyatı da içerip kendi kendini kirletir.
+                # Kaydetmeden ÖNCE hesapla — yoksa 30 günlük medyan / son fiyat
+                # az önce eklenen fiyatı da içerip kendi kendini kirletir.
                 opportunity = await detect_drop(
                     self._db_pool, product.platform, product.product_id, product.price
                 )
                 if opportunity is not None:
                     low_period_label = await lowest_price_period(
                         self._db_pool, product.platform, product.product_id, product.price
+                    )
+                if product.price_badge:
+                    badge_old_price = await get_last_price(
+                        self._db_pool, product.platform, product.product_id
                     )
 
             await save_product(self._db_pool, product)
@@ -92,9 +97,9 @@ class Storage:
                     )
                     await notify_watchers(self._db_pool, opportunity, product.title, product.url)
 
-                # Amazon "en düşük fiyat" rozeti bildirimi
+                # Platformun kendi rozeti (ör. Amazon "X günün en düşük fiyatı")
                 if product.price_badge:
-                    await self._notifier.price_badge_alert(product)
+                    await self._notifier.price_badge_alert(product, badge_old_price)
 
         except Exception as exc:
             logger.warning("DB kayıt hatası (%s): %s", product.product_id, exc)
