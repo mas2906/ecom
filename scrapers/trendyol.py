@@ -411,6 +411,7 @@ class TrendyolScraper(BaseScraper):
                 await _warmup_page(page)
 
                 consecutive_empty = 0
+                seen_ids: set[str] = set()
 
                 for page_num in range(1, max_pages + 1):
                     url = _build_url(category, page_num)
@@ -435,8 +436,21 @@ class TrendyolScraper(BaseScraper):
                         continue
 
                     consecutive_empty = 0
-                    log.info("  -> %d ürün (sayfa %d)", len(products), page_num)
-                    for p in products:
+
+                    new_products = [p for p in products if p.product_id not in seen_ids]
+                    if not new_products:
+                        log.info(
+                            "Sayfa %d tamamen mükerrer (gerçek sonuç sayısı buraya kadarmış) — duruyoruz.",
+                            page_num,
+                        )
+                        break
+
+                    seen_ids.update(p.product_id for p in new_products)
+                    log.info(
+                        "  -> %d ürün (sayfa %d, %d yeni)",
+                        len(products), page_num, len(new_products),
+                    )
+                    for p in new_products:
                         yield p
 
                     if page_num < max_pages:

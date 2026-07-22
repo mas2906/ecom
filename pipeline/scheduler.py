@@ -94,6 +94,9 @@ class AdaptiveScheduler:
             args=[platform, key],
             id=job_id,
             replace_existing=True,
+            # Varsayılan 1sn tolerans çok dar — reload/meşguliyet anında
+            # tetikleme sessizce atlanmasın.
+            misfire_grace_time=3600,
         )
         log.info("Zamanlandı: %s → %.1f saat sonra", job_id, interval)
 

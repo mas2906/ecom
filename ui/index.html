@@ -852,6 +852,17 @@
     _currentJobId = null;
   }
 
+  function _disableScanBtn(msg) {
+    const btn = document.getElementById('btn-scan');
+    btn.disabled = true;
+    btn.style.opacity = '.4';
+    btn.style.cursor = 'not-allowed';
+    btn.title = msg || 'Manuel tarama devre dışı';
+    btn.innerHTML = '⚡ Manuel Tarama Devre Dışı (otomatik zamanlamayı kullanın)';
+    btn.onclick = null;
+    _currentJobId = null;
+  }
+
   async function stopScan() {
     if (!_currentJobId) return;
     try {
@@ -880,11 +891,25 @@
     initProgress(categories.length*platforms.length);
 
     try {
-      const {job_id} = await fetch('/scrape',{
+      const resp = await fetch('/scrape',{
         method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({platforms,categories,pages})
-      }).then(r=>r.json());
+      });
+      const data = await resp.json();
 
+      if (!resp.ok || !data.job_id) {
+        addLog(data.detail || 'Tarama başlatılamadı', 'ERROR');
+        showToast(data.detail || 'Tarama başlatılamadı', 'error');
+        if (resp.status === 423) {
+          _disableScanBtn(data.detail);
+        } else {
+          _resetScanBtn();
+        }
+        setStatus('hata');
+        return;
+      }
+
+      const {job_id} = data;
       _currentJobId = job_id;
       _setScanBtnStop();
 
@@ -1103,6 +1128,28 @@
     } catch(_) {}
   }
 
+  // ── Canlı yayın — otomatik/adaptif taramaların log'unu terminale akıtır ────
+  let _liveStarted = false;
+  function startLiveStream() {
+    const term = document.getElementById('terminal');
+    const es = new EventSource('/stream/live');
+    es.onmessage = ({data}) => {
+      const msg = JSON.parse(data);
+      if (!msg || msg.type !== 'log' || msg.level === 'DEBUG') return;
+      if (!_liveStarted) {
+        term.innerHTML = '';
+        _liveStarted = true;
+      }
+      addLog(msg.msg, msg.level);
+      if (/tarama başladı|Adaptif tarama:/.test(msg.msg)) setStatus('taranıyor (otomatik)', true);
+      if (/Tamamlandı!|executed successfully|Çıktı:/.test(msg.msg)) {
+        setStatus('boşta');
+        loadRecent(); loadMatches(); loadStats();
+      }
+    };
+    es.onerror = () => { es.close(); setTimeout(startLiveStream, 5000); };
+  }
+
   // ── Init ──────────────────────────────────────────────────────────
   _applyPlatformUI();
   loadPool();
@@ -1111,6 +1158,7 @@
   loadMatches();
   loadBadgeProducts();
   loadStats();
+  startLiveStream();
 
   async function shutdownApp() {
     const btn = document.querySelector('button[onclick="shutdownApp()"]');

@@ -33,6 +33,31 @@ scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
 _adaptive_scheduler: "AdaptiveScheduler | None" = None
 _adaptive_pool = None
 
+# Manuel "Tara" başlatma açık.
+MANUAL_SCAN_ENABLED = True
+
+# ── Canlı yayın — otomatik/adaptif taramaların log'unu arayüze akıtır ──────────
+# (manuel tarama kapalıyken arayüzün hâlâ ne olduğunu görebilmesi için)
+_live_subscribers: list[asyncio.Queue] = []
+
+
+class _LiveBroadcastHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = {"type": "log", "level": record.levelname, "msg": self.format(record)}
+            for q in _live_subscribers:
+                q.put_nowait(msg)
+        except Exception:
+            pass
+
+
+logging.getLogger().addHandler(_LiveBroadcastHandler())
+logging.getLogger().setLevel(logging.INFO)
+
 
 # ── Category pool persistence ──────────────────────────────────────────────────
 
@@ -97,6 +122,9 @@ def _apply_schedule(times: list[str]) -> None:
                 CronTrigger(hour=int(hour), minute=int(minute)),
                 id=f"auto_scan_{t.replace(':','_')}",
                 replace_existing=True,
+                # Varsayılan 1sn çok dar — sunucu tam o an meşgul/reload
+                # oluyorsa tetikleme sessizce ertesi güne kaçıyordu.
+                misfire_grace_time=3600,
             )
             logging.getLogger(__name__).info("Zamanlayıcı eklendi: %s", t)
         except Exception as e:
@@ -141,8 +169,12 @@ async def _auto_scan() -> None:
             for platform in job.get("platforms", []):
                 if platform not in SCRAPER_MAP:
                     continue
-                count = await run_platform(platform, category, pages, storage)
-                logger.info("  ✓ %s / %s → %d ürün", platform, category, count)
+                try:
+                    count = await run_platform(platform, category, pages, storage)
+                    logger.info("  ✓ %s / %s → %d ürün", platform, category, count)
+                except Exception as e:
+                    # Tek bir iş başarısız olsa bile kalan işler devam etsin.
+                    logger.error("  ✗ %s / %s başarısız: %s", platform, category, e)
         await storage.flush()
 
         # Barkod zenginleştirme
@@ -227,9 +259,14 @@ async def _run_adaptive_job(platform: str, category: str) -> None:
 
     logger.info("🔄 Adaptif tarama: %s / %s", platform, category)
     storage = Storage("./ignored/output", db_pool=_adaptive_pool, notifier=notifier)
-    count = await run_platform(platform, category, job.get("pages", 3), storage)
-    await storage.flush()
-    logger.info("  ✓ adaptif %s / %s → %d ürün", platform, category, count)
+    try:
+        count = await run_platform(platform, category, job.get("pages", 3), storage)
+        logger.info("  ✓ adaptif %s / %s → %d ürün", platform, category, count)
+    except Exception as e:
+        # Bu iş başarısız olsa bile scheduler kendini yeniden zamanlamaya devam etsin.
+        logger.error("  ✗ adaptif %s / %s başarısız: %s", platform, category, e)
+    finally:
+        await storage.flush()
 
 
 async def _notify_cross_matches(pool, notifier) -> None:
@@ -293,6 +330,9 @@ async def index():
 
 @app.post("/scrape")
 async def start_scrape(req: ScrapeRequest):
+    if not MANUAL_SCAN_ENABLED:
+        raise HTTPException(423, "Manuel tarama devre dışı — sadece otomatik zamanlanmış taramalar çalışır")
+
     from main import SCRAPER_MAP
     bad = [p for p in req.platforms if p not in SCRAPER_MAP]
     if bad:
@@ -406,6 +446,34 @@ async def _get_and_notify_matches(pool, notifier) -> list:
         return matches
     except Exception:
         return []
+
+
+@app.get("/stream/live")
+async def stream_live():
+    """
+    Otomatik/adaptif taramaların canlı log akışı — manuel tarama kapalıyken
+    bile arayüzün ne olup bittiğini gösterebilmesi için. job_id gerektirmez,
+    birden fazla sekme aynı anda dinleyebilir.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    _live_subscribers.append(q)
+
+    async def gen():
+        try:
+            while True:
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=30.0)
+                    yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+        finally:
+            _live_subscribers.remove(q)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/stream/{job_id}")
@@ -615,7 +683,7 @@ async def add_to_pool(req: PoolRequest):
     return {"items": pool, "added": added}
 
 
-@app.delete("/pool/{item}")
+@app.delete("/pool/{item:path}")
 async def remove_from_pool(item: str):
     pool = [p for p in _load_pool() if p != item]
     _save_pool(pool)
@@ -652,4 +720,9 @@ async def shutdown():
 if __name__ == "__main__":
     import os as _os
     dev = _os.getenv("ENV", "dev") != "prod"
-    uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=dev, reload_dirs=["."])
+    uvicorn.run(
+        "api:app", host="127.0.0.1", port=8000, reload=dev, reload_dirs=["."],
+        # /stream/live gibi açık SSE bağlantıları reload'ı sonsuza kadar
+        # bekletmesin diye kapanma süresini sınırlıyoruz.
+        timeout_graceful_shutdown=3,
+    )
