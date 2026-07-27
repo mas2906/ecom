@@ -15,6 +15,7 @@ from playwright.async_api import (
     async_playwright,
     Page,
     BrowserContext,
+    Error as PWError,
     TimeoutError as PWTimeout,
 )
 from playwright_stealth import Stealth
@@ -26,6 +27,11 @@ from .base import BaseScraper
 logger = logging.getLogger(__name__)
 
 BASE = "https://www.amazon.com.tr"
+
+# Amazon, Trendyol'a göre çok daha agresif bot koruması (AWS WAF) uyguluyor.
+# Onlarca sayfa istemek IP'yi hızla WAF blokuna sokuyor; bu yüzden istenen
+# sayfa sayısı ne olursa olsun burada sert bir üst sınır uygulanır.
+_MAX_PAGES_HARD_CAP = 8
 
 # Gerçek kullanıcı viewport boyutları — her oturumda biri seçilir
 _VIEWPORTS = [
@@ -53,6 +59,13 @@ class AmazonScraper(BaseScraper):
     async def scrape_category(
         self, category: str, max_pages: int = 5
     ) -> AsyncIterator[Product]:
+        if max_pages > _MAX_PAGES_HARD_CAP:
+            logger.info(
+                "Amazon: istenen %d sayfa %d ile sınırlandırıldı (WAF riski)",
+                max_pages, _MAX_PAGES_HARD_CAP,
+            )
+            max_pages = _MAX_PAGES_HARD_CAP
+
         seen_asins: set[str] = set()
         viewport = random.choice(_VIEWPORTS)
 
@@ -95,7 +108,7 @@ class AmazonScraper(BaseScraper):
                         break
 
                     if page_num < max_pages:
-                        wait = random.uniform(4.0, 10.0)
+                        wait = random.uniform(7.0, 16.0)
                         logger.info("  ⏳ %.1fs bekleniyor…", wait)
                         await asyncio.sleep(wait)
 
@@ -113,6 +126,16 @@ class AmazonScraper(BaseScraper):
             await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
         except PWTimeout:
             logger.warning("Amazon sayfa %d zaman aşımı, atlanıyor", page_num)
+            return []
+        except PWError as exc:
+            # AWS WAF, isteği reddettiğinde HTML yerine "application/octet-stream"
+            # gövdeli bir 503 döner; Chromium bunu indirme sanıp goto'yu
+            # "Download is starting" hatasıyla keser. Bunu bot bloku gibi ele al.
+            logger.warning(
+                "Amazon sayfa %d yüklenemedi — muhtemelen WAF bloku (%s)",
+                page_num, exc,
+            )
+            await asyncio.sleep(random.uniform(20, 35))
             return []
 
         # CAPTCHA / robot ekranı kontrolü
