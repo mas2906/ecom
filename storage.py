@@ -87,11 +87,13 @@ class Storage:
                         self._db_pool, product.platform, product.product_id
                     )
 
-            await save_product(self._db_pool, product)
+            prev_price = await save_product(self._db_pool, product)
 
             if self._notifier and product.price is not None:
-                # Fiyat düşüşü bildirimi — 30 günlük medyana göre (DEĞİŞİKLİK MOTORU)
-                if opportunity is not None:
+                # Fiyat düşüşü bildirimi — 30 günlük medyana göre (DEĞİŞİKLİK MOTORU).
+                # Son taramadan bu yana fiyat değişmediyse (aynı gün tekrar tarama vb.)
+                # tekrar bildirim atma — sadece son fiyattan gerçekten düştüyse gönder.
+                if opportunity is not None and (prev_price is None or product.price < prev_price):
                     await self._notifier.price_drop(
                         product, opportunity.median_30d, opportunity.new_price, low_period_label
                     )

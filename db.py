@@ -113,7 +113,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 _GET_LAST_PRICE = """
 SELECT price FROM price_history
 WHERE platform = ? AND product_id = ?
-ORDER BY scraped_at DESC
+ORDER BY scraped_at DESC, id DESC
 LIMIT 1;
 """
 
