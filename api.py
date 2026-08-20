@@ -132,13 +132,19 @@ def _apply_schedule(times: list[str]) -> None:
 
 
 async def _auto_scan() -> None:
-    """Otomatik zamanlı tarama — jobs.json'daki tüm işleri çalıştırır."""
+    """
+    Otomatik zamanlı tarama — jobs.json'daki (platform, kategori) çiftleri
+    için DB'de zaten bilinen ürünleri kendi ürün ID'siyle arayıp fiyatını
+    yeniler (kategori sayfalarını yeniden taramaz — WAF riski çok daha
+    düşük). DB yoksa yenilenecek ürün de yoktur; bu durumda eski kategori
+    taramasına düşer.
+    """
     jobs_file = Path("jobs.json")
     if not jobs_file.exists():
         return
     jobs = json.loads(jobs_file.read_text(encoding="utf-8"))
     logger = logging.getLogger(__name__)
-    logger.info("⏰ Otomatik zamanlı tarama başladı")
+    logger.info("⏰ Otomatik zamanlı ürün yenileme başladı")
 
     from main import SCRAPER_MAP, run_platform
     from storage import Storage
@@ -163,18 +169,34 @@ async def _auto_scan() -> None:
 
     try:
         storage = Storage("./ignored/output", db_pool=db_pool, notifier=notifier)
-        for job in jobs:
-            category = job.get("category", "")
-            pages = job.get("pages", 3)
-            for platform in job.get("platforms", []):
-                if platform not in SCRAPER_MAP:
-                    continue
-                try:
-                    count = await run_platform(platform, category, pages, storage)
-                    logger.info("  ✓ %s / %s → %d ürün", platform, category, count)
-                except Exception as e:
-                    # Tek bir iş başarısız olsa bile kalan işler devam etsin.
-                    logger.error("  ✗ %s / %s başarısız: %s", platform, category, e)
+
+        if db_pool:
+            from pipeline.refresh import refresh_known_products
+            for job in jobs:
+                category = job.get("category", "")
+                for platform in job.get("platforms", []):
+                    if platform not in SCRAPER_MAP:
+                        continue
+                    try:
+                        count = await refresh_known_products(
+                            db_pool, platform, storage, category=category, limit=50
+                        )
+                        logger.info("  ✓ %s / %s → %d ürün yenilendi", platform, category, count)
+                    except Exception as e:
+                        logger.error("  ✗ %s / %s başarısız: %s", platform, category, e)
+        else:
+            # DB yok → yenilenecek bilinen ürün de yok, eski kategori taramasına düş.
+            for job in jobs:
+                category = job.get("category", "")
+                pages = job.get("pages", 3)
+                for platform in job.get("platforms", []):
+                    if platform not in SCRAPER_MAP:
+                        continue
+                    try:
+                        count = await run_platform(platform, category, pages, storage)
+                        logger.info("  ✓ %s / %s → %d ürün", platform, category, count)
+                    except Exception as e:
+                        logger.error("  ✗ %s / %s başarısız: %s", platform, category, e)
         await storage.flush()
 
         # Barkod zenginleştirme
@@ -230,7 +252,11 @@ async def _start_adaptive_scheduling() -> None:
 
 
 async def _run_adaptive_job(platform: str, category: str) -> None:
-    """Tek bir (platform, kategori) işini çalıştırır — jobs.json'daki sayfa sayısını kullanır."""
+    """
+    Tek bir (platform, kategori) işini çalıştırır — DB'de bu kategoride
+    zaten bilinen ürünleri kendi ürün ID'siyle arayıp fiyatlarını yeniler
+    (kategori sayfalarını yeniden taramaz).
+    """
     logger = logging.getLogger(__name__)
     if not _JOBS_FILE.exists():
         return
@@ -242,7 +268,7 @@ async def _run_adaptive_job(platform: str, category: str) -> None:
     if not job:
         return
 
-    from main import SCRAPER_MAP, run_platform
+    from main import SCRAPER_MAP
     if platform not in SCRAPER_MAP:
         return
     from storage import Storage
@@ -257,11 +283,14 @@ async def _run_adaptive_job(platform: str, category: str) -> None:
             min_drop_pct=float(os.getenv("TELEGRAM_MIN_DROP_PCT", "0")),
         )
 
-    logger.info("🔄 Adaptif tarama: %s / %s", platform, category)
+    logger.info("🔄 Adaptif ürün yenileme: %s / %s", platform, category)
     storage = Storage("./ignored/output", db_pool=_adaptive_pool, notifier=notifier)
     try:
-        count = await run_platform(platform, category, job.get("pages", 3), storage)
-        logger.info("  ✓ adaptif %s / %s → %d ürün", platform, category, count)
+        from pipeline.refresh import refresh_known_products
+        count = await refresh_known_products(
+            _adaptive_pool, platform, storage, category=category, limit=50
+        )
+        logger.info("  ✓ adaptif %s / %s → %d ürün yenilendi", platform, category, count)
     except Exception as e:
         # Bu iş başarısız olsa bile scheduler kendini yeniden zamanlamaya devam etsin.
         logger.error("  ✗ adaptif %s / %s başarısız: %s", platform, category, e)

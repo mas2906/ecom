@@ -5,6 +5,7 @@ Bu yüzden Playwright + playwright-stealth kullanılır; çok daha güvenilir.
 """
 
 import asyncio
+import json
 import logging
 import random
 import re
@@ -112,6 +113,68 @@ class AmazonScraper(BaseScraper):
                         logger.info("  ⏳ %.1fs bekleniyor…", wait)
                         await asyncio.sleep(wait)
 
+            finally:
+                await browser.close()
+
+    # ------------------------------------------------------------------
+    # ASIN ile arama — bilinen ürünlerin fiyatını yenilemek için.
+    # Kategori taraması gibi sayfalama yapmaz: ASIN arama kutusuna
+    # yazıldığında hedef ürün ilk sonuçlarda çıkar, bu yüzden WAF riski
+    # kategori taramasına göre çok daha düşüktür. Tarayıcı/oturum bir kez
+    # açılır, tüm ürünler aynı sayfa üzerinden sırayla aranır (her ürün
+    # için ayrı tarayıcı açılmaz).
+    # ------------------------------------------------------------------
+
+    async def scrape_by_barcodes(self, items: list[dict]) -> AsyncIterator[Product]:
+        """items: [{"product_id": str (ASIN), "category": str}, ...]"""
+        viewport = random.choice(_VIEWPORTS)
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-web-security",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                    f"--window-size={viewport['width']},{viewport['height']}",
+                ],
+            )
+            ctx = await _new_context(browser, viewport)
+            page = await ctx.new_page()
+            await Stealth().apply_stealth_async(page)
+
+            try:
+                logger.info("[Amazon] Isınma navigasyonu…")
+                try:
+                    await page.goto(BASE, wait_until="domcontentloaded", timeout=30_000)
+                    await asyncio.sleep(random.uniform(2.0, 4.0))
+                    await _human_scroll(page)
+                except Exception as exc:
+                    logger.debug("Isınma başarısız: %s", exc)
+
+                for i, item in enumerate(items):
+                    asin = item.get("product_id")
+                    if not asin:
+                        continue
+                    url = _build_amazon_url(asin, 1)
+                    logger.info(
+                        "[Amazon] ürün yenileme %d/%d — %s", i + 1, len(items), asin
+                    )
+
+                    products = await self._scrape_page(page, url, item.get("category") or asin, 1)
+                    match = next((p for p in products if p.product_id == asin), None)
+                    if match:
+                        match.category = item.get("category") or match.category
+                        yield match
+                    else:
+                        logger.info("  → eşleşme bulunamadı (%s)", asin)
+
+                    if i < len(items) - 1:
+                        wait = random.uniform(7.0, 16.0)
+                        logger.info("  ⏳ %.1fs bekleniyor…", wait)
+                        await asyncio.sleep(wait)
             finally:
                 await browser.close()
 

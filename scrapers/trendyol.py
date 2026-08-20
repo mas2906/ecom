@@ -289,6 +289,51 @@ def _parse_page(html: str, category: str, page_num: int) -> list[Product]:
 
 
 # ---------------------------------------------------------------------------
+# Ürün detay sayfası — schema.org ld+json'dan fiyat/başlık/marka çıkar.
+# Arama sonucu JSON'u ("__single-search-result__PROPS" vb.) detay
+# sayfalarında yok; detay sayfası mikro-servisleri ("envoy_*") parça parça
+# ve kararsız bir yapıda — ld+json ise stabil ve platformdan bağımsız.
+# ---------------------------------------------------------------------------
+
+_LDJSON_PAT = re.compile(
+    r'<script type="application/ld\+json">(.*?)</script>', re.DOTALL
+)
+
+
+def _parse_detail_page(html: str, product_id: str, category: str) -> Optional[Product]:
+    for m in _LDJSON_PAT.finditer(html):
+        try:
+            data = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            continue
+        if data.get("@type") != "Product":
+            continue
+
+        offers = data.get("offers") or {}
+        price = _num(offers.get("price"))
+        title = (data.get("name") or "").strip()
+        if price is None or not title:
+            return None
+
+        brand_raw = data.get("brand") or {}
+        brand = brand_raw.get("name") if isinstance(brand_raw, dict) else None
+        url = offers.get("url") or data.get("@id") or ""
+        in_stock = "instock" in str(offers.get("availability") or "").lower()
+
+        return Product(
+            platform="trendyol",
+            category=category,
+            product_id=str(data.get("sku") or product_id),
+            title=title,
+            brand=brand,
+            url=url,
+            price=price,
+            in_stock=in_stock,
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Playwright yardımcıları
 # ---------------------------------------------------------------------------
 
@@ -456,6 +501,55 @@ class TrendyolScraper(BaseScraper):
                     if page_num < max_pages:
                         await asyncio.sleep(random.uniform(3.0, 7.0))
 
+            finally:
+                await browser.close()
+
+    # ------------------------------------------------------------------
+    # Bilinen ürünün fiyatını yenile — kategori taraması gibi sayfalama
+    # yapmaz, DB'de zaten kayıtlı ürün URL'sini doğrudan ziyaret edip
+    # ld+json'dan fiyatı okur (arama sonucu değil, tek ürün = tek istek).
+    # Bu yüzden WAF/bot koruması riski kategori taramasına göre çok daha
+    # düşüktür. Tarayıcı/oturum bir kez açılır, tüm ürünler aynı sayfa
+    # üzerinden sırayla ziyaret edilir.
+    # ------------------------------------------------------------------
+
+    async def scrape_by_barcodes(self, items: list[dict]) -> AsyncIterator[Product]:
+        """items: [{"product_id": str, "category": str, "url": str}, ...]"""
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                ],
+            )
+            page = await _new_trendyol_page(browser)
+
+            try:
+                log.info("[Trendyol] Isınma navigasyonu…")
+                await _warmup_page(page)
+
+                for i, item in enumerate(items):
+                    pid = item.get("product_id")
+                    url = item.get("url")
+                    if not pid or not url:
+                        continue
+                    log.info("[Trendyol] ürün yenileme %d/%d — %s", i + 1, len(items), pid)
+
+                    html = await self._load_page(page, url, i + 1)
+                    if html is None:
+                        continue
+
+                    product = _parse_detail_page(html, pid, item.get("category") or "")
+                    if product:
+                        yield product
+                    else:
+                        log.info("  → fiyat okunamadı (%s)", pid)
+
+                    if i < len(items) - 1:
+                        await asyncio.sleep(random.uniform(5.0, 12.0))
             finally:
                 await browser.close()
 

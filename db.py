@@ -169,6 +169,11 @@ SELECT product_id, platform, url FROM products
 WHERE barcode IS NULL AND url IS NOT NULL
 """
 
+_FETCH_FOR_REFRESH = """
+SELECT product_id, platform, category, url FROM products
+WHERE platform = ?
+"""
+
 _GET_PRICE_HISTORY_SINCE = """
 SELECT price FROM price_history
 WHERE platform = ? AND product_id = ? AND price IS NOT NULL
@@ -358,6 +363,21 @@ async def fetch_without_barcode(pool: SQLitePool, platform: Optional[str] = None
         q += " AND platform = ?"
         args = (platform,)
     q += f" LIMIT {limit}"
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(q, *args)
+    return rows
+
+
+async def fetch_products_for_refresh(
+    pool: SQLitePool, platform: str, category: Optional[str] = None, limit: int = 100
+) -> list[dict]:
+    """Fiyatı yenilenecek bilinen ürünler — en eski taranandan başlar (adil rotasyon)."""
+    q = _FETCH_FOR_REFRESH
+    args: tuple = (platform,)
+    if category:
+        q += " AND category = ?"
+        args += (category,)
+    q += f" ORDER BY last_seen_at ASC LIMIT {limit}"
     async with pool.acquire() as conn:
         rows = await conn.fetch(q, *args)
     return rows
